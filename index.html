@@ -127,6 +127,7 @@ h2.sec{font-size:14px;margin:18px 4px 8px;color:var(--ink);}
 <button class="fab" id="fab" style="display:none" aria-label="手入力で追加">＋</button>
 <nav class="tabbar" id="tabbar">
   <button data-tab="home"><span class="ic">◉</span>ホーム</button>
+  <button data-tab="assets"><span class="ic">¥</span>資産</button>
   <button data-tab="list"><span class="ic">≣</span>明細</button>
   <button data-tab="import"><span class="ic">⇪</span>取込</button>
   <button data-tab="settings"><span class="ic">⚙</span>設定</button>
@@ -228,7 +229,7 @@ const SEED_RULES = [
 let db;
 function openDB(){
   return new Promise((res,rej)=>{
-    const rq = indexedDB.open("kakeibo", 1);
+    const rq = indexedDB.open("kakeibo", 2);
     rq.onupgradeneeded = e=>{
       const d = e.target.result;
       if(!d.objectStoreNames.contains("tx")){
@@ -239,6 +240,10 @@ function openDB(){
         d.createObjectStore("rules",{keyPath:"rid",autoIncrement:true});
       if(!d.objectStoreNames.contains("meta"))
         d.createObjectStore("meta",{keyPath:"k"});
+      if(!d.objectStoreNames.contains("accounts"))
+        d.createObjectStore("accounts",{keyPath:"aid",autoIncrement:true});
+      if(!d.objectStoreNames.contains("bal"))
+        d.createObjectStore("bal",{keyPath:"bid"});
     };
     rq.onsuccess = e=>{db=e.target.result;res();};
     rq.onerror = e=>rej(e);
@@ -261,10 +266,21 @@ function tclear(store){return new Promise((res,rej)=>{
   t.oncomplete=res;t.onerror=rej;});}
 
 async function seedIfNeeded(){
-  const m = await tget("meta","seeded");
-  if(m) return;
-  for(const r of SEED_RULES) await tput("rules",{kw:r.kw,cat:r.cat});
-  await tput("meta",{k:"seeded",v:1});
+  if(!(await tget("meta","seeded"))){
+    for(const r of SEED_RULES) await tput("rules",{kw:r.kw,cat:r.cat});
+    await tput("meta",{k:"seeded",v:1});
+  }
+  if(!(await tget("meta","seededAcc"))){
+    for(const [name,kind] of [["イオン銀行","asset"],["三井住友銀行","asset"],["財布(現金)","asset"]])
+      await tput("accounts",{name,kind});
+    await tput("meta",{k:"seededAcc",v:1});
+  }
+}
+async function ensureAccount(name,kind){
+  let a=(await tall("accounts")).find(x=>x.name===name);
+  if(a) return a;
+  await tput("accounts",{name,kind});
+  return (await tall("accounts")).find(x=>x.name===name);
 }
 
 /* ---------- ユーティリティ ---------- */
@@ -352,13 +368,18 @@ function normalizePayPay(rows){
 }
 
 function normalizeSMBC(rows){
-  const out=[];
+  const out=[]; const bals={};
   const H=rows[0]; const idx=n=>H.indexOf(n);
   const iDate=idx("年月日"), iOut=idx("お引出し"), iIn=idx("お預入れ"),
         iDesc=idx("お取り扱い内容"), iBal=idx("残高");
   for(let r=1;r<rows.length;r++){
     const c=rows[r];
     const d=normDate(c[iDate]); if(!d) continue;
+    const balV=parseAmt(c[iBal]);
+    if(balV!=null){ // 各月の最終取引時点の残高を月末残高として記録
+      const m=d.date.slice(0,7);
+      if(!bals[m] || d.date>=bals[m].date) bals[m]={date:d.date, amount:balV};
+    }
     const outAmt=parseAmt(c[iOut]), inAmt=parseAmt(c[iIn]);
     const desc=(c[iDesc]||"").trim();
     let type, amount;
@@ -372,7 +393,7 @@ function normalizeSMBC(rows){
       source:"smbc", category:"", taxTag:"", locked:false
     });
   }
-  return {txs:out, excluded:0};
+  return {txs:out, excluded:0, bals};
 }
 
 /* ---------- 自動分類 ---------- */
@@ -406,7 +427,8 @@ async function importFiles(files){
       if(!rows.length){logs.push(`✗ ${f.name}: 空のファイル`);continue;}
       const fmt=detectFormat(rows[0]);
       if(!fmt){logs.push(`✗ ${f.name}: 未対応の形式です(PayPay / 三井住友銀行のCSVに対応)`);continue;}
-      const {txs,excluded} = fmt==="paypay"?normalizePayPay(rows):normalizeSMBC(rows);
+      const res = fmt==="paypay"?normalizePayPay(rows):normalizeSMBC(rows);
+      const {txs,excluded} = res;
       let added=0,dup=0;
       for(const tx of txs){
         if(existing.has(tx.id)){dup++;continue;}
@@ -417,6 +439,18 @@ async function importFiles(files){
       const fname = fmt==="paypay"?"PayPay":"三井住友銀行";
       logs.push(`✓ ${f.name}(${fname})\n　取込 ${added}件 / 重複スキップ ${dup}件`+
         (excluded?` / ポイント行除外 ${excluded}件`:""));
+      if(fmt==="smbc" && res.bals && Object.keys(res.bals).length){
+        const acc=await ensureAccount("三井住友銀行","asset");
+        let nb=0;
+        for(const [m,b] of Object.entries(res.bals)){
+          const bid=m+":"+acc.aid;
+          const ex=await tget("bal",bid);
+          if(ex && ex.auto===false) continue; // 手入力済みは上書きしない
+          await tput("bal",{bid,month:m,aid:acc.aid,amount:b.amount,auto:true});
+          nb++;
+        }
+        if(nb) logs.push(`　└ 月末残高 ${nb}ヶ月分を「資産」に自動記録`);
+      }
     }catch(e){
       logs.push(`✗ ${f.name}: 読込エラー(${e.message||e})`);
     }
@@ -456,9 +490,10 @@ function drawDonut(canvas, items, centerLabel, centerValue){
   }else{
     for(const it of items){
       const ang=it.v/total*Math.PI*2;
+      const gap=Math.min(0.012, ang*0.25); // 極小セグメントでも開始角<終了角を保証
       ctx.beginPath();
       ctx.strokeStyle=it.color;ctx.lineWidth=R-r;
-      ctx.arc(cx,cy,(R+r)/2,a+0.012,a+ang-0.012);
+      ctx.arc(cx,cy,(R+r)/2,a+gap,a+ang-gap);
       ctx.stroke();
       a+=ang;
     }
@@ -488,7 +523,7 @@ function drawBars(canvas, labels, incs, exps){
 }
 
 /* ---------- 画面状態 ---------- */
-const S = { tab:"home", month:"", filterCat:"", filterMonth:"" };
+const S = { tab:"home", month:"", filterCat:"", filterMonth:"", assetMonth:"" };
 
 function latestMonth(txs){
   if(!txs.length){const d=new Date();return d.toISOString().slice(0,7);}
@@ -766,7 +801,9 @@ async function renderSettings(){
     alert(`${n}件の分類を更新しました(手動で確定済みの明細は変更しません)`);
   };
   el("bkExport").onclick=async()=>{
-    const data={ver:1,exported:new Date().toISOString(),tx:await tall("tx"),rules:await tall("rules")};
+    const data={ver:2,exported:new Date().toISOString(),
+      tx:await tall("tx"),rules:await tall("rules"),
+      accounts:await tall("accounts"),bal:await tall("bal")};
     const blob=new Blob([JSON.stringify(data)],{type:"application/json"});
     const a=document.createElement("a");
     a.href=URL.createObjectURL(blob);
@@ -781,17 +818,155 @@ async function renderSettings(){
       let n=0;
       for(const t of (data.tx||[])){await tput("tx",t);n++;}
       for(const r of (data.rules||[])){delete r.rid;await tput("rules",r);}
+      for(const a of (data.accounts||[])){await tput("accounts",a);} // aidは残高との紐付けのため保持
+      for(const b of (data.bal||[])){await tput("bal",b);}
       await loadRules();
       alert(`バックアップから ${n}件の明細を読み込みました`);
       renderTab();
     }catch(err){alert("読み込みに失敗しました: "+err.message);}
   };
   el("wipe").onclick=async()=>{
-    if(confirm("全ての明細とルールを削除します。元に戻せません。よろしいですか?")){
+    if(confirm("全ての明細・ルール・残高記録を削除します。元に戻せません。よろしいですか?")){
       await tclear("tx");await tclear("rules");await tclear("meta");
+      await tclear("accounts");await tclear("bal");
       await seedIfNeeded();await loadRules();
-      alert("削除しました(初期ルールは再設定済み)");renderTab();
+      alert("削除しました(初期ルールと口座は再設定済み)");renderTab();
     }
+  };
+}
+
+/* ---------- 資産・負債 ---------- */
+const ACC_COLORS=["#1B2A4A","#3E8E9E","#D08C3C","#5E8C61","#6B5B95","#C97FA4","#556070","#B89B2E"];
+const monthShort=m=>Number(m.slice(5))+"月";
+async function renderAssets(){
+  const accs=(await tall("accounts")).sort((a,b)=>a.aid-b.aid);
+  const bals=await tall("bal");
+  const txs=await tall("tx");
+  const balMap={}; // month -> aid -> bal
+  for(const b of bals){ (balMap[b.month]=balMap[b.month]||{})[b.aid]=b; }
+  const months=Object.keys(balMap).sort();
+  if(!S.assetMonth) S.assetMonth = months[months.length-1] || latestMonth(txs);
+  const m=S.assetMonth;
+
+  const nwOf=mm=>{
+    const row=balMap[mm]||{}; let nw=0,has=false;
+    for(const a of accs){const b=row[a.aid];if(!b)continue;has=true;
+      nw += a.kind==="liability" ? -b.amount : b.amount;}
+    return has?nw:null;
+  };
+  const nw=nwOf(m), nwPrev=nwOf(shiftMonth(m,-1));
+  const {inc,exp}=sumMonth(txs,m);
+  const gap=(nw!=null&&nwPrev!=null)? (nwPrev+inc-exp)-nw : null;
+  const gMonths=months.slice(-8);
+
+  el("view").innerHTML=`
+  <div class="monthnav">
+    <button id="aPrev" aria-label="前の月">‹</button>
+    <div class="label">${monthLabel(m)}</div>
+    <button id="aNext" aria-label="次の月">›</button>
+  </div>
+  <div class="card">
+    <div class="bigbal">
+      <div class="t">純資産(${monthLabel(m)}末)</div>
+      <div class="v num">${nw!=null?yen(nw):"—"}</div>
+      ${(nw!=null&&nwPrev!=null)?`<div class="note" style="text-align:center">前月比 <b style="color:${nw-nwPrev>=0?'var(--income)':'var(--expense)'}">${nw-nwPrev>=0?"+":""}${yen(nw-nwPrev)}</b></div>`:""}
+    </div>
+  </div>
+  <div class="card">
+    <h2>月末残高の入力</h2>
+    ${accs.map(a=>{
+      const b=(balMap[m]||{})[a.aid];
+      return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+        <span style="flex:1;font-size:14px;font-weight:600">${esc(a.name)}${a.kind==="liability"?' <span class="srcbadge">負債</span>':""}${b&&b.auto?' <span class="srcbadge">自動</span>':""}</span>
+        <input type="number" inputmode="numeric" data-aid="${a.aid}" class="balIn" style="width:140px;text-align:right" value="${b?b.amount:""}" placeholder="未入力">
+      </div>`;}).join("")}
+    <button class="btn" id="balSave">この月の残高を保存</button>
+    <div style="height:8px"></div>
+    <button class="btn sub" id="accMng">口座の追加・管理</button>
+    <p class="note">三井住友銀行はCSV取込時に自動記録されます。手入力で上書きすると、以後その月は手入力が優先されます。</p>
+  </div>
+  <div class="card">
+    <h2>純資産の推移</h2>
+    ${gMonths.length?`<canvas id="stk"></canvas>
+    <div class="legend">${accs.map((a,i)=>`<div class="li"><div class="nm"><span class="dot" style="background:${ACC_COLORS[i%ACC_COLORS.length]}"></span><span class="txt">${esc(a.name)}${a.kind==="liability"?"(負債)":""}</span></div></div>`).join("")}</div>`
+    :`<div class="empty">残高を入力すると推移グラフが表示されます</div>`}
+  </div>
+  <div class="card">
+    <h2>記録漏れチェック(参考)</h2>
+    ${gap!=null?`
+    <div style="font-size:14px">前月末純資産 ＋ 今月の収支 − 今月末純資産 ＝
+      <b class="num" style="color:${gap>0?'var(--expense)':'var(--income)'}">${yen(gap)}</b></div>
+    <p class="note">プラスは家計簿に記録されていない支出(現金払いなど)の推定です。カード利用と引落の時期ズレも含まれるため、目安としてご覧ください。</p>`
+    :`<p class="note" style="margin:0">当月と前月の残高が揃うと、記録漏れ(現金支出など)の推定が表示されます。</p>`}
+  </div>`;
+  el("aPrev").onclick=()=>{S.assetMonth=shiftMonth(m,-1);renderAssets();};
+  el("aNext").onclick=()=>{S.assetMonth=shiftMonth(m,1);renderAssets();};
+  el("balSave").onclick=async()=>{
+    for(const inp of document.querySelectorAll(".balIn")){
+      const aid=Number(inp.dataset.aid), bid=m+":"+aid, v=inp.value.trim();
+      if(v===""){ if(await tget("bal",bid)) await tdel("bal",bid); continue; }
+      const n=Number(v); if(isNaN(n)) continue;
+      await tput("bal",{bid,month:m,aid,amount:n,auto:false});
+    }
+    renderAssets();
+  };
+  el("accMng").onclick=openAccMng;
+  if(gMonths.length) drawStacked(el("stk"),gMonths,accs,balMap);
+}
+function drawStacked(canvas,gMonths,accs,balMap){
+  const dpr=window.devicePixelRatio||1;
+  const w=canvas.clientWidth,h=200;
+  canvas.width=w*dpr;canvas.height=h*dpr;canvas.style.height=h+"px";
+  const ctx=canvas.getContext("2d");ctx.scale(dpr,dpr);
+  let maxP=1,maxN=0;
+  const data=gMonths.map(mm=>{
+    const row=balMap[mm]||{}; const pos=[],neg=[];
+    accs.forEach((a,i)=>{const b=row[a.aid];if(!b)return;
+      (a.kind==="liability"?neg:pos).push({v:b.amount,color:ACC_COLORS[i%ACC_COLORS.length]});});
+    maxP=Math.max(maxP,pos.reduce((s,x)=>s+x.v,0));
+    maxN=Math.max(maxN,neg.reduce((s,x)=>s+x.v,0));
+    return {pos,neg};
+  });
+  const top=12,bot=20, span=maxP+maxN;
+  const base= top + (h-top-bot)*(maxP/span);
+  const scale=(h-top-bot)/span;
+  const n=gMonths.length, slot=w/n, bw=Math.min(26,slot*0.5);
+  ctx.font="10px -apple-system,'Hiragino Sans'";ctx.textAlign="center";
+  data.forEach((d,i)=>{
+    const x=slot*i+slot/2;
+    let y=base;
+    for(const s of d.pos){const hh=s.v*scale;ctx.fillStyle=s.color;ctx.fillRect(x-bw/2,y-hh,bw,hh);y-=hh;}
+    let y2=base;
+    for(const s of d.neg){const hh=s.v*scale;ctx.globalAlpha=.55;ctx.fillStyle=s.color;ctx.fillRect(x-bw/2,y2,bw,hh);ctx.globalAlpha=1;y2+=hh;}
+    ctx.fillStyle="#8A8F98";ctx.fillText(monthShort(gMonths[i]),x,h-6);
+  });
+  ctx.strokeStyle="#E3E6E0";ctx.beginPath();ctx.moveTo(0,base+0.5);ctx.lineTo(w,base+0.5);ctx.stroke();
+}
+async function openAccMng(){
+  const accs=(await tall("accounts")).sort((a,b)=>a.aid-b.aid);
+  showModal(`
+    <h3>口座の追加・管理</h3>
+    <div id="accList">${accs.map(a=>`
+      <div class="rulerow"><span class="kw">${esc(a.name)}</span>
+      <span class="to">${a.kind==="liability"?"負債":"資産"}</span>
+      <button data-aid="${a.aid}">削除</button></div>`).join("")}</div>
+    <div style="display:flex;gap:8px;margin:12px 0">
+      <input type="text" id="nAccName" placeholder="口座名(例: ○○証券)" style="flex:1">
+      <select id="nAccKind"><option value="asset">資産</option><option value="liability">負債</option></select>
+    </div>
+    <button class="btn" id="nAccAdd">追加する</button>
+  `);
+  document.querySelectorAll("#accList button").forEach(b=>b.onclick=async()=>{
+    if(!confirm("この口座と残高の記録を削除します。よろしいですか?"))return;
+    const aid=Number(b.dataset.aid);
+    await tdel("accounts",aid);
+    for(const bb of await tall("bal")) if(bb.aid===aid) await tdel("bal",bb.bid);
+    closeModal();renderAssets();
+  });
+  el("nAccAdd").onclick=async()=>{
+    const name=el("nAccName").value.trim(); if(!name)return;
+    await tput("accounts",{name,kind:el("nAccKind").value});
+    closeModal();renderAssets();
   };
 }
 
@@ -806,8 +981,8 @@ function renderTab(){
   document.querySelectorAll("nav.tabbar button").forEach(b=>
     b.classList.toggle("on",b.dataset.tab===S.tab));
   el("fab").style.display = S.tab==="list" ? "block" : "none";
-  el("hdrSub").textContent = {home:"ダッシュボード",list:"明細",import:"データ取込",settings:"設定"}[S.tab];
-  ({home:renderHome,list:renderList,import:renderImport,settings:renderSettings})[S.tab]();
+  el("hdrSub").textContent = {home:"ダッシュボード",assets:"資産・負債",list:"明細",import:"データ取込",settings:"設定"}[S.tab];
+  ({home:renderHome,assets:renderAssets,list:renderList,import:renderImport,settings:renderSettings})[S.tab]();
 }
 document.querySelectorAll("nav.tabbar button").forEach(b=>
   b.onclick=()=>{S.tab=b.dataset.tab;renderTab();});
