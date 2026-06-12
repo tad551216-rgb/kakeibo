@@ -180,11 +180,12 @@ const SEED_RULES = [
   {kw:"PayPayカード",    cat:"振替(対象外)"},
   {kw:"ﾔﾏﾄ ﾀﾀﾞｼ",        cat:"振替(対象外)"},   // 本人間振込
   {kw:"ｾｿﾞﾝ",            cat:"カード引落"},
-  {kw:"ﾐﾂｲｽﾐﾄﾓｶ-ﾄﾞ",     cat:"カード引落"},
+  {kw:"ﾐﾂｲｽﾐﾄﾓｶ-ﾄﾞ",     cat:"振替(対象外)"},   // Olive明細側で計上するため
   {kw:"ｲｵﾝﾌｲﾅﾝｼﾔﾙ",      cat:"カード引落"},
   {kw:"ｶﾝｻｲﾃﾞﾝﾘﾖｸ",      cat:"水道光熱"},
   {kw:"電力",            cat:"水道光熱"},
-  {kw:"ガス",            cat:"水道光熱"},
+  {kw:"ｶﾞｽ",             cat:"水道光熱"},
+  {kw:"大阪ガス",        cat:"水道光熱"},
   {kw:"水道",            cat:"水道光熱"},
   {kw:"ｷﾖｳｻｲ",           cat:"保険"},
   {kw:"共済",            cat:"保険"},
@@ -222,6 +223,20 @@ const SEED_RULES = [
   {kw:"Apple",           cat:"通信・サブスク"},
   {kw:"ふるさと",        cat:"寄附・ふるさと納税"},
   {kw:"さとふる",        cat:"寄附・ふるさと納税"},
+  {kw:"ダイソー",        cat:"日用品"},
+  {kw:"イトーヨーカドー",cat:"食費"},
+  {kw:"イオンリテール",  cat:"食費"},
+  {kw:"イオンモール",    cat:"食費"},
+  {kw:"イオン　",        cat:"食費"},
+  {kw:"おおとりウィングス",cat:"娯楽"},
+  {kw:"とんかつ",        cat:"外食"},
+  {kw:"ガスト",          cat:"外食"},
+  {kw:"びっくりドンキー",cat:"外食"},
+  {kw:"はしや",          cat:"外食"},
+  {kw:"さん天",          cat:"外食"},
+  {kw:"自販機",          cat:"食費"},
+  {kw:"トーヨーベンディング",cat:"食費"},
+  {kw:"道の駅",          cat:"旅行"},
   {kw:"ﾌﾘｺﾐ",            cat:"振替(対象外)"},
 ];
 
@@ -269,12 +284,44 @@ async function seedIfNeeded(){
   if(!(await tget("meta","seeded"))){
     for(const r of SEED_RULES) await tput("rules",{kw:r.kw,cat:r.cat});
     await tput("meta",{k:"seeded",v:1});
+    await tput("meta",{k:"mig2",v:1}); // 新規インストールは最新ルール込みのため移行不要
   }
   if(!(await tget("meta","seededAcc"))){
     for(const [name,kind] of [["イオン銀行","asset"],["三井住友銀行","asset"],["財布(現金)","asset"]])
       await tput("accounts",{name,kind});
     await tput("meta",{k:"seededAcc",v:1});
   }
+}
+async function migrate(){
+  if(await tget("meta","mig2")) return;
+  // Olive明細の取込開始に伴う変更:
+  // 1) 銀行側の三井住友カード引落を「振替(対象外)」へ(カード明細側で計上するため)
+  const existingKw=new Set();
+  for(const r of await tall("rules")){
+    existingKw.add(r.kw);
+    if(r.kw==="ﾐﾂｲｽﾐﾄﾓｶ-ﾄﾞ" && r.cat!=="振替(対象外)"){
+      r.cat="振替(対象外)"; await tput("rules",r);
+    }
+    if(r.kw==="ガス"){ // 「ガスト」誤マッチ防止: 銀行摘要形式の半角カナへ
+      r.kw="ｶﾞｽ"; await tput("rules",r); existingKw.add("ｶﾞｽ");
+    }
+  }
+  // 2) Olive向け店舗ルールを追加(既存キーワードは重複追加しない)
+  for(const [kw,cat] of [["ダイソー","日用品"],["イトーヨーカドー","食費"],["イオンリテール","食費"],
+    ["イオンモール","食費"],["イオン　","食費"],["おおとりウィングス","娯楽"],["とんかつ","外食"],
+    ["ガスト","外食"],["びっくりドンキー","外食"],["はしや","外食"],["さん天","外食"],
+    ["自販機","食費"],["トーヨーベンディング","食費"],["道の駅","旅行"]]){
+    if(!existingKw.has(kw)) await tput("rules",{kw,cat});
+  }
+  await loadRules();
+  // 3) 手動確定していない明細にルールを再適用(過去のカード引落が振替に変わる)
+  for(const t of await tall("tx")){
+    if(t.locked) continue;
+    const before=t.category+"|"+t.type;
+    categorize(t);
+    if(t.category+"|"+t.type!==before) await tput("tx",t);
+  }
+  await tput("meta",{k:"mig2",v:1});
 }
 async function ensureAccount(name,kind){
   let a=(await tall("accounts")).find(x=>x.name===name);
@@ -336,7 +383,38 @@ function detectFormat(header){
   const h = header.join(",");
   if(h.includes("取引番号") && h.includes("取引先")) return "paypay";
   if(h.includes("お引出し") && h.includes("お取り扱い内容")) return "smbc";
+  // Olive/Vpass: 1行目が「氏名 様, 4980-09**-..., Ｏｌｉｖｅ／クレジット」形式、または日付始まりの明細行
+  if(header.length>=3 && ((header[0]||"").trim().endsWith("様") || /\*\*/.test(header[1]||""))) return "olive";
+  if(normDate(header[0]) && header.length>=6 && parseAmt(header[2])!=null) return "olive";
   return null;
+}
+
+function normalizeOlive(rows){
+  const out=[]; let method="Olive/クレジット"; const seen={};
+  for(const c of rows){
+    if(!c.length) continue;
+    const c0=(c[0]||"").trim();
+    const d=normDate(c0);
+    if(!d){ // カードヘッダー行(氏名/番号/カード種別)・合計行はスキップ
+      if(c.length>=3 && (c0.endsWith("様")||/\*\*/.test(c[1]||"")) && (c[2]||"").trim())
+        method=(c[2]||"").trim();
+      continue;
+    }
+    const amount=parseAmt(c[2]) ?? parseAmt(c[5]); // 利用金額(なければお支払金額)
+    if(!amount) continue;
+    let who=(c[1]||"").trim();
+    const mm=who.match(/^(.*?)[／/](ｉＤ|ＮＦＣ|iD|NFC)$/); // 末尾の決済手段表記を除去
+    if(mm) who=mm[1].trim();
+    const key=[d.date,who,amount].join("|");
+    seen[key]=(seen[key]||0)+1; // 同日同額の正当な複数取引に連番付与
+    out.push({
+      id:"olive:"+fnv(key)+"-"+seen[key],
+      date:d.date, time:"", amount, type:"expense",
+      counterparty:who, memo:(c[6]||"").trim(),
+      method, source:"olive", category:"", taxTag:"", locked:false
+    });
+  }
+  return {txs:out, excluded:0};
 }
 
 function normalizePayPay(rows){
@@ -427,7 +505,9 @@ async function importFiles(files){
       if(!rows.length){logs.push(`✗ ${f.name}: 空のファイル`);continue;}
       const fmt=detectFormat(rows[0]);
       if(!fmt){logs.push(`✗ ${f.name}: 未対応の形式です(PayPay / 三井住友銀行のCSVに対応)`);continue;}
-      const res = fmt==="paypay"?normalizePayPay(rows):normalizeSMBC(rows);
+      const res = fmt==="paypay"?normalizePayPay(rows)
+                : fmt==="smbc"  ?normalizeSMBC(rows)
+                : normalizeOlive(rows);
       const {txs,excluded} = res;
       let added=0,dup=0;
       for(const tx of txs){
@@ -436,7 +516,7 @@ async function importFiles(files){
         await tput("tx",tx);
         existing.add(tx.id);added++;
       }
-      const fname = fmt==="paypay"?"PayPay":"三井住友銀行";
+      const fname = fmt==="paypay"?"PayPay":fmt==="smbc"?"三井住友銀行":"Olive/三井住友カード";
       logs.push(`✓ ${f.name}(${fname})\n　取込 ${added}件 / 重複スキップ ${dup}件`+
         (excluded?` / ポイント行除外 ${excluded}件`:""));
       if(fmt==="smbc" && res.bals && Object.keys(res.bals).length){
@@ -615,7 +695,7 @@ async function renderList(){
     const cd=CAT[t.category]||{};
     const cls=t.type==="expense"?"exp":t.type==="income"?"inc":"trf";
     const sign=t.type==="expense"?"−":t.type==="income"?"+":"";
-    const src=t.source==="paypay"?"PayPay":t.source==="smbc"?"三井住友":"手入力";
+    const src=t.source==="paypay"?"PayPay":t.source==="smbc"?"三井住友":t.source==="olive"?"Olive":"手入力";
     html+=`<div class="txrow" data-id="${esc(t.id)}">
       <span class="cat dot" style="background:${cd.color||"#ccc"}"></span>
       <div class="mid">
@@ -716,7 +796,7 @@ function renderImport(){
   el("view").innerHTML=`
   <div class="card">
     <h2>CSVファイルの取込</h2>
-    <p class="dropmsg" style="margin:4px 0 12px">対応形式:<b>PayPay取引履歴</b> / <b>三井住友銀行 入出金明細</b><br>
+    <p class="dropmsg" style="margin:4px 0 12px">対応形式:<b>PayPay取引履歴</b> / <b>三井住友銀行 入出金明細</b> / <b>Olive(三井住友カード)利用明細</b><br>
     複数ファイルをまとめて選べます。同じ取引は自動で重複除外されます。</p>
     <input type="file" id="files" accept=".csv,text/csv" multiple style="display:none">
     <button class="btn" id="pick">ファイルを選ぶ</button>
@@ -726,11 +806,12 @@ function renderImport(){
     <h2>各サービスでのCSVの取り方</h2>
     <p style="font-size:13px;margin:6px 0"><b>PayPay</b>:アプリ → 取引履歴 → 右上「CSV」→ メールで受取 → ファイルに保存</p>
     <p style="font-size:13px;margin:6px 0"><b>三井住友銀行</b>:SMBCダイレクト → 入出金明細 → 「明細をダウンロード」(CSV)</p>
+    <p style="font-size:13px;margin:6px 0"><b>Olive(三井住友カード)</b>:Vpass → ご利用明細 → 「CSVで保存」。お支払い月ごとのファイルを毎月取り込んでください</p>
     <p style="font-size:13px;margin:6px 0"><b>イオン銀行</b>:イオン銀行ダイレクト → 入出金明細照会 → CSVダウンロード。郵送の取引明細PDFは取込できないため、件数が少ない場合は明細画面の「＋」から手入力でも登録できます。</p>
   </div>
   <div class="card">
     <h2>二重計上を防ぐしくみ</h2>
-    <p style="font-size:13px;margin:6px 0">PayPayでの支払いは、後日銀行口座から「PAYPAYカード」としてまとめて引き落とされます。このアプリでは<b>PayPay明細側を支出として計上</b>し、銀行側の引落は自動的に「振替(対象外)」へ分類して二重計上を防ぎます。ご本人名義間の口座振込も同様です。</p>
+    <p style="font-size:13px;margin:6px 0">カードでの支払いは、後日銀行口座からまとめて引き落とされます。このアプリでは<b>カード明細側(PayPay・Olive)を利用日ベースの支出として計上</b>し、銀行側の「PAYPAYカード」「ミツイスミトモカード」引落は自動的に「振替(対象外)」へ分類して二重計上を防ぎます。ご本人名義間の口座振込も同様です。Oliveの明細は毎月取り込む運用にしてください(取り込まない月はカード支出が記録されなくなります)。</p>
   </div>`;
   el("pick").onclick=()=>el("files").click();
   el("files").onchange=async e=>{
@@ -993,6 +1074,7 @@ el("fab").onclick=openManualAdd;
   await openDB();
   await seedIfNeeded();
   await loadRules();
+  await migrate();
   renderTab();
   if("serviceWorker" in navigator){
     try{ navigator.serviceWorker.register("./sw.js"); }catch(e){}
