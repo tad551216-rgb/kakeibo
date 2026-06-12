@@ -1,0 +1,828 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#1B2A4A">
+<link rel="manifest" href="./manifest.json">
+<link rel="apple-touch-icon" href="./icon-180.png">
+<title>わが家の家計簿</title>
+<style>
+:root{
+  --ink:#1B2A4A; --bg:#F4F6F3; --surface:#FFFFFF; --line:#E3E6E0;
+  --expense:#BF4E3C; --income:#2E7D5B; --muted:#8A8F98; --transfer:#9AA0A6;
+  --accent:#1B2A4A;
+  --radius:14px;
+}
+*{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+html,body{margin:0;padding:0;background:var(--bg);color:var(--ink);
+  font-family:-apple-system,"Hiragino Sans","Hiragino Kaku Gothic ProN","Noto Sans JP",sans-serif;
+  font-size:16px; line-height:1.55;}
+body{padding-bottom:calc(64px + env(safe-area-inset-bottom));}
+.num{font-variant-numeric:tabular-nums; font-feature-settings:"tnum";}
+header.app{position:sticky;top:0;z-index:10;background:var(--bg);
+  padding:calc(10px + env(safe-area-inset-top)) 16px 8px;
+  display:flex;align-items:baseline;justify-content:space-between;}
+header.app h1{font-size:17px;margin:0;font-weight:700;letter-spacing:.04em;}
+header.app .sub{font-size:12px;color:var(--muted);}
+main{padding:0 14px 24px;max-width:680px;margin:0 auto;}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);
+  padding:14px 16px;margin-bottom:12px;}
+.card h2{font-size:13px;color:var(--muted);font-weight:600;margin:0 0 8px;letter-spacing:.06em;}
+/* 月ナビ */
+.monthnav{display:flex;align-items:center;justify-content:center;gap:18px;margin:6px 0 12px;}
+.monthnav button{border:1px solid var(--line);background:var(--surface);border-radius:10px;
+  width:38px;height:38px;font-size:18px;color:var(--ink);}
+.monthnav .label{font-size:19px;font-weight:700;min-width:140px;text-align:center;letter-spacing:.03em;}
+/* 収支サマリ */
+.balrow{display:flex;gap:10px;}
+.balrow .cell{flex:1;text-align:center;}
+.balrow .t{font-size:12px;color:var(--muted);}
+.balrow .v{font-size:18px;font-weight:700;}
+.v.inc{color:var(--income);} .v.exp{color:var(--expense);}
+.bigbal{text-align:center;margin:4px 0 10px;}
+.bigbal .v{font-size:34px;font-weight:800;letter-spacing:.01em;}
+.bigbal .t{font-size:12px;color:var(--muted);letter-spacing:.1em;}
+canvas{display:block;width:100%;}
+/* 凡例 */
+.legend{display:grid;grid-template-columns:1fr 1fr;gap:4px 14px;margin-top:10px;font-size:13px;}
+.legend .li{display:flex;align-items:center;justify-content:space-between;gap:8px;}
+.legend .nm{display:flex;align-items:center;gap:7px;min-width:0;}
+.legend .nm span.txt{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.dot{width:10px;height:10px;border-radius:3px;flex:0 0 10px;}
+.legend .amt{color:var(--muted);}
+/* 医療費プログレス */
+.prog{height:10px;background:var(--bg);border-radius:6px;overflow:hidden;margin-top:8px;border:1px solid var(--line);}
+.prog>i{display:block;height:100%;background:#4E7AA6;border-radius:6px;}
+.progmeta{display:flex;justify-content:space-between;font-size:12px;color:var(--muted);margin-top:5px;}
+/* 明細リスト */
+.txrow{display:flex;align-items:center;gap:10px;padding:11px 2px;border-bottom:1px solid var(--line);}
+.txrow:last-child{border-bottom:none;}
+.txrow .cat{flex:0 0 10px;}
+.txrow .mid{flex:1;min-width:0;}
+.txrow .nm{font-size:15px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.txrow .meta{font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.txrow .amt{font-size:15px;font-weight:700;white-space:nowrap;}
+.amt.exp{color:var(--expense);} .amt.inc{color:var(--income);} .amt.trf{color:var(--transfer);}
+.daterule{font-size:12px;color:var(--muted);background:var(--bg);padding:3px 10px;border-radius:8px;
+  margin:10px 0 2px;display:inline-block;}
+.filterbar{display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap;}
+select,input[type=text],input[type=date],input[type=number]{
+  font:inherit;padding:9px 10px;border:1px solid var(--line);border-radius:10px;background:var(--surface);
+  color:var(--ink);min-width:0;}
+.filterbar select{flex:1;}
+/* ボタン */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;font:inherit;font-weight:700;
+  border:none;border-radius:12px;padding:13px 16px;background:var(--accent);color:#fff;width:100%;}
+.btn.sub{background:var(--surface);color:var(--ink);border:1px solid var(--line);font-weight:600;}
+.btn.danger{background:#fff;color:var(--expense);border:1px solid var(--expense);}
+.btn:active{opacity:.8;}
+.btn.small{width:auto;padding:8px 14px;font-size:14px;}
+.fab{position:fixed;right:18px;bottom:calc(76px + env(safe-area-inset-bottom));z-index:9;
+  width:54px;height:54px;border-radius:50%;background:var(--accent);color:#fff;font-size:28px;
+  border:none;box-shadow:0 4px 14px rgba(27,42,74,.3);}
+/* タブバー */
+nav.tabbar{position:fixed;left:0;right:0;bottom:0;z-index:20;background:rgba(255,255,255,.96);
+  -webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);border-top:1px solid var(--line);
+  display:flex;padding-bottom:env(safe-area-inset-bottom);}
+nav.tabbar button{flex:1;background:none;border:none;padding:9px 0 7px;font-size:11px;color:var(--muted);
+  display:flex;flex-direction:column;align-items:center;gap:2px;font-family:inherit;}
+nav.tabbar button.on{color:var(--ink);font-weight:700;}
+nav.tabbar .ic{font-size:21px;line-height:1;}
+/* モーダル */
+.modalbg{position:fixed;inset:0;background:rgba(20,28,46,.45);z-index:30;display:flex;align-items:flex-end;}
+.modal{background:var(--surface);width:100%;max-width:680px;margin:0 auto;border-radius:18px 18px 0 0;
+  padding:18px 18px calc(18px + env(safe-area-inset-bottom));max-height:86vh;overflow:auto;}
+.modal h3{margin:0 0 12px;font-size:17px;}
+.frow{margin-bottom:12px;}
+.frow label{display:block;font-size:12px;color:var(--muted);margin-bottom:4px;}
+.frow select,.frow input{width:100%;}
+.chips{display:flex;gap:8px;flex-wrap:wrap;}
+.chip{padding:7px 13px;border-radius:999px;border:1px solid var(--line);background:var(--surface);
+  font-size:13px;color:var(--ink);}
+.chip.on{background:var(--ink);color:#fff;border-color:var(--ink);}
+.checkrow{display:flex;align-items:center;gap:8px;font-size:14px;margin:10px 0;}
+.checkrow input{width:20px;height:20px;}
+/* 取込 */
+.dropmsg{font-size:13px;color:var(--muted);}
+.implog{font-size:13px;background:var(--bg);border-radius:10px;padding:10px 12px;margin-top:10px;
+  white-space:pre-wrap;}
+.srcbadge{font-size:10px;border:1px solid var(--line);border-radius:5px;padding:1px 5px;color:var(--muted);
+  margin-right:5px;vertical-align:1px;}
+/* ルール表 */
+.rulerow{display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--line);font-size:14px;}
+.rulerow .kw{flex:1;font-weight:600;word-break:break-all;}
+.rulerow .to{color:var(--muted);font-size:12px;}
+.rulerow button{border:none;background:none;color:var(--expense);font-size:13px;font-family:inherit;}
+.empty{text-align:center;color:var(--muted);padding:30px 10px;font-size:14px;}
+.note{font-size:12px;color:var(--muted);margin-top:8px;}
+h2.sec{font-size:14px;margin:18px 4px 8px;color:var(--ink);}
+</style>
+</head>
+<body>
+<header class="app"><h1>わが家の家計簿</h1><div class="sub" id="hdrSub"></div></header>
+<main id="view"></main>
+<button class="fab" id="fab" style="display:none" aria-label="手入力で追加">＋</button>
+<nav class="tabbar" id="tabbar">
+  <button data-tab="home"><span class="ic">◉</span>ホーム</button>
+  <button data-tab="list"><span class="ic">≣</span>明細</button>
+  <button data-tab="import"><span class="ic">⇪</span>取込</button>
+  <button data-tab="settings"><span class="ic">⚙</span>設定</button>
+</nav>
+<div id="modalRoot"></div>
+
+<script>
+"use strict";
+/* ============================================================
+   わが家の家計簿 PWA — Phase 1
+   取込(PayPay/三井住友銀行CSV) + 自動分類 + 明細 + ダッシュボード
+   データは全て端末内(IndexedDB)。外部送信なし。
+   ============================================================ */
+
+/* ---------- カテゴリ定義 ---------- */
+const CATS = [
+  // 支出
+  {name:"食費",        type:"expense", color:"#D08C3C"},
+  {name:"外食",        type:"expense", color:"#BF4E3C"},
+  {name:"日用品",      type:"expense", color:"#A98F5F"},
+  {name:"医療・薬",    type:"expense", color:"#4E7AA6", taxTag:"医療費"},
+  {name:"水道光熱",    type:"expense", color:"#3E8E9E"},
+  {name:"通信・サブスク",type:"expense", color:"#6B5B95"},
+  {name:"住居費",      type:"expense", color:"#7A6A4F"},
+  {name:"保険",        type:"expense", color:"#5E8C61", taxTag:"保険料"},
+  {name:"衣料",        type:"expense", color:"#C97FA4"},
+  {name:"旅行",        type:"expense", color:"#8E6FB8"},
+  {name:"車両費",      type:"expense", color:"#556070"},
+  {name:"娯楽",        type:"expense", color:"#B89B2E"},
+  {name:"寄附・ふるさと納税", type:"expense", color:"#3C7A55", taxTag:"寄附金"},
+  {name:"カード引落",  type:"expense", color:"#8A8F98"},
+  {name:"その他支出",  type:"expense", color:"#9AA0A6"},
+  // 収入
+  {name:"給与収入",    type:"income",  color:"#2E7D5B"},
+  {name:"年金収入",    type:"income",  color:"#3C8C73"},
+  {name:"その他収入",  type:"income",  color:"#6FA287"},
+  // 振替
+  {name:"振替(対象外)", type:"transfer", color:"#B8BCC2"},
+];
+const CAT = Object.fromEntries(CATS.map(c=>[c.name,c]));
+
+/* ---------- 初期ルール(キーワード → カテゴリ) ---------- */
+const SEED_RULES = [
+  {kw:"給料",            cat:"給与収入"},
+  {kw:"ネンキン",        cat:"年金収入"},
+  {kw:"ｺｳｾｲﾈﾝｷﾝ",        cat:"年金収入"},
+  {kw:"年金",            cat:"年金収入"},
+  {kw:"当選金",          cat:"その他収入"},
+  {kw:"PAYPAYｶ-ﾄﾞ",      cat:"振替(対象外)"},   // PayPay明細側で計上するため
+  {kw:"PayPayカード",    cat:"振替(対象外)"},
+  {kw:"ﾔﾏﾄ ﾀﾀﾞｼ",        cat:"振替(対象外)"},   // 本人間振込
+  {kw:"ｾｿﾞﾝ",            cat:"カード引落"},
+  {kw:"ﾐﾂｲｽﾐﾄﾓｶ-ﾄﾞ",     cat:"カード引落"},
+  {kw:"ｲｵﾝﾌｲﾅﾝｼﾔﾙ",      cat:"カード引落"},
+  {kw:"ｶﾝｻｲﾃﾞﾝﾘﾖｸ",      cat:"水道光熱"},
+  {kw:"電力",            cat:"水道光熱"},
+  {kw:"ガス",            cat:"水道光熱"},
+  {kw:"水道",            cat:"水道光熱"},
+  {kw:"ｷﾖｳｻｲ",           cat:"保険"},
+  {kw:"共済",            cat:"保険"},
+  {kw:"保険",            cat:"保険"},
+  {kw:"ｶﾝﾘﾋ",            cat:"住居費"},
+  {kw:"管理費",          cat:"住居費"},
+  {kw:"薬局",            cat:"医療・薬"},
+  {kw:"ココカラ",        cat:"医療・薬"},
+  {kw:"ドラッグ",        cat:"医療・薬"},
+  {kw:"病院",            cat:"医療・薬"},
+  {kw:"クリニック",      cat:"医療・薬"},
+  {kw:"歯科",            cat:"医療・薬"},
+  {kw:"グルマン",        cat:"外食"},
+  {kw:"王将",            cat:"外食"},
+  {kw:"SOBA",            cat:"外食"},
+  {kw:"大元",            cat:"外食"},
+  {kw:"たつのや",        cat:"外食"},
+  {kw:"サンマルク",      cat:"外食"},
+  {kw:"マクドナルド",    cat:"外食"},
+  {kw:"珈琲",            cat:"外食"},
+  {kw:"カフェ",          cat:"外食"},
+  {kw:"Coke ON",         cat:"食費"},
+  {kw:"酒店",            cat:"食費"},
+  {kw:"スーパー",        cat:"食費"},
+  {kw:"イズミヤ",        cat:"食費"},
+  {kw:"ローソン",        cat:"食費"},
+  {kw:"セブン",          cat:"食費"},
+  {kw:"ファミリーマート",cat:"食費"},
+  {kw:"ユニクロ",        cat:"衣料"},
+  {kw:"ホテル",          cat:"旅行"},
+  {kw:"トヨタ",          cat:"車両費"},
+  {kw:"ガソリン",        cat:"車両費"},
+  {kw:"ENEOS",           cat:"車両費"},
+  {kw:"宝くじ",          cat:"娯楽"},
+  {kw:"Apple",           cat:"通信・サブスク"},
+  {kw:"ふるさと",        cat:"寄附・ふるさと納税"},
+  {kw:"さとふる",        cat:"寄附・ふるさと納税"},
+  {kw:"ﾌﾘｺﾐ",            cat:"振替(対象外)"},
+];
+
+/* ---------- IndexedDB ---------- */
+let db;
+function openDB(){
+  return new Promise((res,rej)=>{
+    const rq = indexedDB.open("kakeibo", 1);
+    rq.onupgradeneeded = e=>{
+      const d = e.target.result;
+      if(!d.objectStoreNames.contains("tx")){
+        const s = d.createObjectStore("tx",{keyPath:"id"});
+        s.createIndex("date","date");
+      }
+      if(!d.objectStoreNames.contains("rules"))
+        d.createObjectStore("rules",{keyPath:"rid",autoIncrement:true});
+      if(!d.objectStoreNames.contains("meta"))
+        d.createObjectStore("meta",{keyPath:"k"});
+    };
+    rq.onsuccess = e=>{db=e.target.result;res();};
+    rq.onerror = e=>rej(e);
+  });
+}
+function tput(store,obj){return new Promise((res,rej)=>{
+  const t=db.transaction(store,"readwrite");t.objectStore(store).put(obj);
+  t.oncomplete=res;t.onerror=rej;});}
+function tdel(store,key){return new Promise((res,rej)=>{
+  const t=db.transaction(store,"readwrite");t.objectStore(store).delete(key);
+  t.oncomplete=res;t.onerror=rej;});}
+function tall(store){return new Promise((res,rej)=>{
+  const rq=db.transaction(store).objectStore(store).getAll();
+  rq.onsuccess=()=>res(rq.result);rq.onerror=rej;});}
+function tget(store,key){return new Promise((res,rej)=>{
+  const rq=db.transaction(store).objectStore(store).get(key);
+  rq.onsuccess=()=>res(rq.result);rq.onerror=rej;});}
+function tclear(store){return new Promise((res,rej)=>{
+  const t=db.transaction(store,"readwrite");t.objectStore(store).clear();
+  t.oncomplete=res;t.onerror=rej;});}
+
+async function seedIfNeeded(){
+  const m = await tget("meta","seeded");
+  if(m) return;
+  for(const r of SEED_RULES) await tput("rules",{kw:r.kw,cat:r.cat});
+  await tput("meta",{k:"seeded",v:1});
+}
+
+/* ---------- ユーティリティ ---------- */
+const yen = n => "¥" + Math.round(n).toLocaleString("ja-JP");
+function fnv(str){ // 簡易ハッシュ(重複判定用)
+  let h=0x811c9dc5;
+  for(let i=0;i<str.length;i++){h^=str.charCodeAt(i);h=Math.imul(h,0x01000193)>>>0;}
+  return h.toString(36)+"_"+str.length;
+}
+function parseAmt(s){
+  if(s==null) return null;
+  s=String(s).replace(/[",¥\\\s円]/g,"");
+  if(s===""||s==="-") return null;
+  const n=Number(s); return isNaN(n)?null:n;
+}
+function normDate(s){ // "2026/4/6" "2026/04/30 04:15:42" → YYYY-MM-DD (+time)
+  const m=String(s).trim().match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})(?:[ T](\d{2}:\d{2}(?::\d{2})?))?/);
+  if(!m) return null;
+  return {date:`${m[1]}-${m[2].padStart(2,"0")}-${m[3].padStart(2,"0")}`, time:m[4]||""};
+}
+function monthOf(d){return d.slice(0,7);}
+function esc(s){return String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));}
+
+/* ---------- CSVパーサ(引用符・カンマ対応) ---------- */
+function parseCSV(text){
+  const rows=[];let row=[],cur="",q=false;
+  for(let i=0;i<text.length;i++){
+    const c=text[i];
+    if(q){
+      if(c==='"'){ if(text[i+1]==='"'){cur+='"';i++;} else q=false; }
+      else cur+=c;
+    }else{
+      if(c==='"') q=true;
+      else if(c===","){row.push(cur);cur="";}
+      else if(c==="\n"||c==="\r"){
+        if(c==="\r"&&text[i+1]==="\n") i++;
+        row.push(cur);cur="";
+        if(row.some(x=>x!=="")) rows.push(row);
+        row=[];
+      }else cur+=c;
+    }
+  }
+  if(cur!==""||row.length){row.push(cur); if(row.some(x=>x!=="")) rows.push(row);}
+  return rows;
+}
+function decodeBuf(buf){
+  try{ return new TextDecoder("utf-8",{fatal:true}).decode(buf); }
+  catch(e){ return new TextDecoder("shift_jis").decode(buf); }
+}
+
+/* ---------- 取込:フォーマット判定と正規化 ---------- */
+function detectFormat(header){
+  const h = header.join(",");
+  if(h.includes("取引番号") && h.includes("取引先")) return "paypay";
+  if(h.includes("お引出し") && h.includes("お取り扱い内容")) return "smbc";
+  return null;
+}
+
+function normalizePayPay(rows){
+  const out=[]; let excluded=0;
+  const H=rows[0]; const idx=n=>H.indexOf(n);
+  const iDate=idx("取引日"), iOut=H.findIndex(h=>h.startsWith("出金金額")),
+        iIn=H.findIndex(h=>h.startsWith("入金金額")), iKind=idx("取引内容"),
+        iWho=idx("取引先"), iHow=idx("取引方法"), iNo=idx("取引番号");
+  for(let r=1;r<rows.length;r++){
+    const c=rows[r]; const kind=c[iKind]||"";
+    if(kind.includes("ポイント")){excluded++;continue;}   // ポイント獲得・期限切れは除外
+    const d=normDate(c[iDate]); if(!d) continue;
+    const outAmt=parseAmt(c[iOut]), inAmt=parseAmt(c[iIn]);
+    let type, amount;
+    if(outAmt){type = kind.includes("チャージ")?"transfer":"expense"; amount=outAmt;}
+    else if(inAmt){type = kind.includes("チャージ")?"transfer":"income"; amount=inAmt;}
+    else continue;
+    const who=(c[iWho]||"").trim();
+    out.push({
+      id:"pp:"+ (c[iNo]||fnv(c.join("|"))) + ":" + kind + ":" + amount,
+      date:d.date, time:d.time, amount, type,
+      counterparty: who.split(" - ")[0] || who || kind,
+      memo: who.includes(" - ") ? who : "",
+      method:(c[iHow]||"").trim(),
+      source:"paypay", category:"", taxTag:"", locked:false
+    });
+  }
+  return {txs:out, excluded};
+}
+
+function normalizeSMBC(rows){
+  const out=[];
+  const H=rows[0]; const idx=n=>H.indexOf(n);
+  const iDate=idx("年月日"), iOut=idx("お引出し"), iIn=idx("お預入れ"),
+        iDesc=idx("お取り扱い内容"), iBal=idx("残高");
+  for(let r=1;r<rows.length;r++){
+    const c=rows[r];
+    const d=normDate(c[iDate]); if(!d) continue;
+    const outAmt=parseAmt(c[iOut]), inAmt=parseAmt(c[iIn]);
+    const desc=(c[iDesc]||"").trim();
+    let type, amount;
+    if(outAmt){type="expense";amount=outAmt;}
+    else if(inAmt){type="income";amount=inAmt;}
+    else continue;
+    out.push({
+      id:"smbc:"+fnv([d.date,amount,desc,c[iBal]||"",type].join("|")),
+      date:d.date, time:"", amount, type,
+      counterparty:desc, memo:"", method:"口座振替/振込",
+      source:"smbc", category:"", taxTag:"", locked:false
+    });
+  }
+  return {txs:out, excluded:0};
+}
+
+/* ---------- 自動分類 ---------- */
+let rulesCache=[];
+async function loadRules(){ rulesCache = await tall("rules"); }
+function categorize(tx){
+  const hay = (tx.counterparty+" "+tx.memo).toLowerCase();
+  for(const r of rulesCache){
+    if(hay.includes(r.kw.toLowerCase())){
+      tx.category=r.cat;
+      const cd=CAT[r.cat];
+      if(cd){ tx.type=cd.type; tx.taxTag = tx.taxTag || cd.taxTag || ""; }
+      return tx;
+    }
+  }
+  tx.category = tx.type==="income" ? "その他収入" :
+                tx.type==="transfer" ? "振替(対象外)" : "その他支出";
+  return tx;
+}
+
+/* ---------- 取込実行 ---------- */
+async function importFiles(files){
+  await loadRules();
+  const existing = new Set((await tall("tx")).map(t=>t.id));
+  const logs=[];
+  for(const f of files){
+    try{
+      const buf=await f.arrayBuffer();
+      const text=decodeBuf(buf);
+      const rows=parseCSV(text);
+      if(!rows.length){logs.push(`✗ ${f.name}: 空のファイル`);continue;}
+      const fmt=detectFormat(rows[0]);
+      if(!fmt){logs.push(`✗ ${f.name}: 未対応の形式です(PayPay / 三井住友銀行のCSVに対応)`);continue;}
+      const {txs,excluded} = fmt==="paypay"?normalizePayPay(rows):normalizeSMBC(rows);
+      let added=0,dup=0;
+      for(const tx of txs){
+        if(existing.has(tx.id)){dup++;continue;}
+        categorize(tx);
+        await tput("tx",tx);
+        existing.add(tx.id);added++;
+      }
+      const fname = fmt==="paypay"?"PayPay":"三井住友銀行";
+      logs.push(`✓ ${f.name}(${fname})\n　取込 ${added}件 / 重複スキップ ${dup}件`+
+        (excluded?` / ポイント行除外 ${excluded}件`:""));
+    }catch(e){
+      logs.push(`✗ ${f.name}: 読込エラー(${e.message||e})`);
+    }
+  }
+  return logs.join("\n");
+}
+
+/* ---------- 集計 ---------- */
+async function allTx(){ return (await tall("tx")).sort((a,b)=> (b.date+b.time).localeCompare(a.date+a.time)); }
+function sumMonth(txs,month){
+  let inc=0,exp=0;const byCat={};
+  for(const t of txs){
+    if(monthOf(t.date)!==month) continue;
+    if(t.type==="income") inc+=t.amount;
+    else if(t.type==="expense"){exp+=t.amount;byCat[t.category]=(byCat[t.category]||0)+t.amount;}
+  }
+  return {inc,exp,byCat};
+}
+function medicalYTD(txs,year){
+  let s=0;
+  for(const t of txs) if(t.taxTag==="医療費" && t.type==="expense" && t.date.startsWith(year)) s+=t.amount;
+  return s;
+}
+
+/* ---------- 描画:ドーナツ&棒グラフ(依存ライブラリなし) ---------- */
+function drawDonut(canvas, items, centerLabel, centerValue){
+  const dpr=window.devicePixelRatio||1;
+  const w=canvas.clientWidth, h=220;
+  canvas.width=w*dpr; canvas.height=h*dpr; canvas.style.height=h+"px";
+  const ctx=canvas.getContext("2d"); ctx.scale(dpr,dpr);
+  const cx=w/2, cy=h/2, R=Math.min(w,h)/2-10, r=R*0.66;
+  const total=items.reduce((s,i)=>s+i.v,0);
+  let a=-Math.PI/2;
+  if(total<=0){
+    ctx.strokeStyle="#E3E6E0";ctx.lineWidth=R-r;
+    ctx.beginPath();ctx.arc(cx,cy,(R+r)/2,0,Math.PI*2);ctx.stroke();
+  }else{
+    for(const it of items){
+      const ang=it.v/total*Math.PI*2;
+      ctx.beginPath();
+      ctx.strokeStyle=it.color;ctx.lineWidth=R-r;
+      ctx.arc(cx,cy,(R+r)/2,a+0.012,a+ang-0.012);
+      ctx.stroke();
+      a+=ang;
+    }
+  }
+  ctx.fillStyle="#8A8F98";ctx.font="11px -apple-system,'Hiragino Sans'";
+  ctx.textAlign="center";ctx.fillText(centerLabel,cx,cy-12);
+  ctx.fillStyle="#1B2A4A";ctx.font="700 21px -apple-system,'Hiragino Sans'";
+  ctx.fillText(centerValue,cx,cy+12);
+}
+function drawBars(canvas, labels, incs, exps){
+  const dpr=window.devicePixelRatio||1;
+  const w=canvas.clientWidth, h=170;
+  canvas.width=w*dpr;canvas.height=h*dpr;canvas.style.height=h+"px";
+  const ctx=canvas.getContext("2d");ctx.scale(dpr,dpr);
+  const max=Math.max(1,...incs,...exps);
+  const n=labels.length, slot=w/n, bw=Math.min(16,slot/3.2);
+  const base=h-22, top=14;
+  ctx.font="10px -apple-system,'Hiragino Sans'";ctx.textAlign="center";
+  for(let i=0;i<n;i++){
+    const x=slot*i+slot/2;
+    const ih=(incs[i]/max)*(base-top), eh=(exps[i]/max)*(base-top);
+    ctx.fillStyle="#2E7D5B";ctx.fillRect(x-bw-1.5,base-ih,bw,ih);
+    ctx.fillStyle="#BF4E3C";ctx.fillRect(x+1.5,base-eh,bw,eh);
+    ctx.fillStyle="#8A8F98";ctx.fillText(labels[i],x,h-7);
+  }
+  ctx.strokeStyle="#E3E6E0";ctx.beginPath();ctx.moveTo(0,base+0.5);ctx.lineTo(w,base+0.5);ctx.stroke();
+}
+
+/* ---------- 画面状態 ---------- */
+const S = { tab:"home", month:"", filterCat:"", filterMonth:"" };
+
+function latestMonth(txs){
+  if(!txs.length){const d=new Date();return d.toISOString().slice(0,7);}
+  return txs.reduce((m,t)=>t.date>m?t.date:m, txs[0].date).slice(0,7);
+}
+function shiftMonth(m,delta){
+  const [y,mo]=m.split("-").map(Number);
+  const d=new Date(y,mo-1+delta,1);
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;
+}
+const monthLabel = m => m? `${m.slice(0,4)}年${Number(m.slice(5))}月` : "";
+
+/* ---------- ホーム ---------- */
+async function renderHome(){
+  const txs=await allTx();
+  if(!S.month) S.month=latestMonth(txs);
+  const {inc,exp,byCat}=sumMonth(txs,S.month);
+  const bal=inc-exp;
+  const items=Object.entries(byCat).sort((a,b)=>b[1]-a[1])
+    .map(([k,v])=>({k,v,color:(CAT[k]||{}).color||"#9AA0A6"}));
+  // 6ヶ月推移
+  const months=[];for(let i=5;i>=0;i--)months.push(shiftMonth(S.month,-i));
+  const incs=months.map(m=>sumMonth(txs,m).inc), exps=months.map(m=>sumMonth(txs,m).exp);
+  const year=S.month.slice(0,4);
+  const med=medicalYTD(txs,year);
+  const medPct=Math.min(100,med/100000*100);
+
+  el("view").innerHTML = `
+  <div class="monthnav">
+    <button id="mPrev" aria-label="前の月">‹</button>
+    <div class="label">${monthLabel(S.month)}</div>
+    <button id="mNext" aria-label="次の月">›</button>
+  </div>
+  <div class="card">
+    <div class="bigbal">
+      <div class="t">今月の収支</div>
+      <div class="v num" style="color:${bal>=0?'var(--income)':'var(--expense)'}">${bal>=0?"+":""}${yen(bal)}</div>
+    </div>
+    <div class="balrow">
+      <div class="cell"><div class="t">収入</div><div class="v inc num">${yen(inc)}</div></div>
+      <div class="cell"><div class="t">支出</div><div class="v exp num">${yen(exp)}</div></div>
+    </div>
+  </div>
+  <div class="card">
+    <h2>支出の内訳</h2>
+    ${txs.length? `<canvas id="donut"></canvas>
+    <div class="legend">${items.map(i=>`
+      <div class="li"><div class="nm"><span class="dot" style="background:${i.color}"></span><span class="txt">${esc(i.k)}</span></div>
+      <div class="amt num">${yen(i.v)}</div></div>`).join("")}</div>`
+    : `<div class="empty">まだデータがありません。<br>「取込」タブからCSVを読み込んでください。</div>`}
+  </div>
+  <div class="card">
+    <h2>収入と支出の推移(6ヶ月)</h2>
+    <canvas id="bars"></canvas>
+  </div>
+  <div class="card">
+    <h2>${year}年 医療費の累計(確定申告メモ)</h2>
+    <div style="display:flex;justify-content:space-between;align-items:baseline">
+      <div class="v num" style="font-size:20px;font-weight:700">${yen(med)}</div>
+      <div class="note">医療費控除ライン ¥100,000</div>
+    </div>
+    <div class="prog"><i style="width:${medPct}%"></i></div>
+    <div class="progmeta"><span>0</span><span>10万円</span></div>
+    <div class="note">「医療・薬」カテゴリ等で税タグ「医療費」が付いた取引の合計です。明細から個別に付け外しできます。</div>
+  </div>`;
+  el("mPrev").onclick=()=>{S.month=shiftMonth(S.month,-1);renderHome();};
+  el("mNext").onclick=()=>{S.month=shiftMonth(S.month,1);renderHome();};
+  if(txs.length) drawDonut(el("donut"),items,"支出合計",yen(exp));
+  drawBars(el("bars"),months.map(m=>Number(m.slice(5))+"月"),incs,exps);
+}
+
+/* ---------- 明細 ---------- */
+async function renderList(){
+  const txs=await allTx();
+  const months=[...new Set(txs.map(t=>monthOf(t.date)))].sort().reverse();
+  if(!S.filterMonth) S.filterMonth = months[0]||"";
+  const cats=[...new Set(txs.map(t=>t.category))].sort();
+  const list = txs.filter(t=>
+    (!S.filterMonth||monthOf(t.date)===S.filterMonth) &&
+    (!S.filterCat||t.category===S.filterCat));
+  let html=`<div class="filterbar">
+    <select id="fM">${["",...months].map(m=>`<option value="${m}" ${m===S.filterMonth?"selected":""}>${m?monthLabel(m):"全期間"}</option>`).join("")}</select>
+    <select id="fC"><option value="">全カテゴリ</option>${cats.map(c=>`<option ${c===S.filterCat?"selected":""}>${esc(c)}</option>`).join("")}</select>
+  </div><div class="card" style="padding:4px 14px">`;
+  if(!list.length) html+=`<div class="empty">該当する明細がありません</div>`;
+  let prevDate="";
+  for(const t of list){
+    if(t.date!==prevDate){html+=`<div class="daterule">${t.date.replace(/-/g,"/")}</div>`;prevDate=t.date;}
+    const cd=CAT[t.category]||{};
+    const cls=t.type==="expense"?"exp":t.type==="income"?"inc":"trf";
+    const sign=t.type==="expense"?"−":t.type==="income"?"+":"";
+    const src=t.source==="paypay"?"PayPay":t.source==="smbc"?"三井住友":"手入力";
+    html+=`<div class="txrow" data-id="${esc(t.id)}">
+      <span class="cat dot" style="background:${cd.color||"#ccc"}"></span>
+      <div class="mid">
+        <div class="nm">${esc(t.counterparty)}</div>
+        <div class="meta"><span class="srcbadge">${src}</span>${esc(t.category)}${t.taxTag?` ・税:${esc(t.taxTag)}`:""}</div>
+      </div>
+      <div class="amt ${cls} num">${sign}${yen(t.amount)}</div>
+    </div>`;
+  }
+  html+="</div>";
+  el("view").innerHTML=html;
+  el("fM").onchange=e=>{S.filterMonth=e.target.value;renderList();};
+  el("fC").onchange=e=>{S.filterCat=e.target.value;renderList();};
+  document.querySelectorAll(".txrow").forEach(r=>r.onclick=()=>openEdit(r.dataset.id));
+}
+
+/* ---------- 編集モーダル ---------- */
+async function openEdit(id){
+  const tx=await tget("tx",id); if(!tx)return;
+  const catOpts = g => CATS.filter(c=>c.type===g).map(c=>
+    `<option ${tx.category===c.name?"selected":""}>${c.name}</option>`).join("");
+  showModal(`
+    <h3>${esc(tx.counterparty)}</h3>
+    <div class="note" style="margin-bottom:10px">${tx.date.replace(/-/g,"/")} ${tx.time||""} ・ ${yen(tx.amount)}${tx.memo?`<br>${esc(tx.memo)}`:""}${tx.method?`<br>${esc(tx.method)}`:""}</div>
+    <div class="frow"><label>カテゴリ</label>
+      <select id="eCat">
+        <optgroup label="支出">${catOpts("expense")}</optgroup>
+        <optgroup label="収入">${catOpts("income")}</optgroup>
+        <optgroup label="振替">${catOpts("transfer")}</optgroup>
+      </select></div>
+    <div class="frow"><label>税タグ(確定申告用)</label>
+      <div class="chips" id="eTax">
+        ${["","医療費","保険料","寄附金"].map(t=>`<button class="chip ${tx.taxTag===t?"on":""}" data-t="${t}">${t||"なし"}</button>`).join("")}
+      </div></div>
+    <div class="checkrow"><input type="checkbox" id="eRule">
+      <span>「<b>${esc(tx.counterparty)}</b>」を含む取引を今後このカテゴリに自動分類する</span></div>
+    <button class="btn" id="eSave">保存する</button>
+    <div style="height:8px"></div>
+    <button class="btn danger" id="eDel">この明細を削除</button>
+  `);
+  let tax=tx.taxTag||"";
+  el("eTax").querySelectorAll(".chip").forEach(c=>c.onclick=()=>{
+    tax=c.dataset.t;
+    el("eTax").querySelectorAll(".chip").forEach(x=>x.classList.toggle("on",x===c));
+  });
+  el("eSave").onclick=async()=>{
+    tx.category=el("eCat").value;
+    const cd=CAT[tx.category]; if(cd) tx.type=cd.type;
+    tx.taxTag=tax; tx.locked=true;
+    await tput("tx",tx);
+    if(el("eRule").checked && tx.counterparty){
+      await tput("rules",{kw:tx.counterparty,cat:tx.category});
+      await loadRules();
+    }
+    closeModal(); renderTab();
+  };
+  el("eDel").onclick=async()=>{
+    if(confirm("この明細を削除します。よろしいですか?")){
+      await tdel("tx",id); closeModal(); renderTab();
+    }
+  };
+}
+
+/* ---------- 手入力 ---------- */
+function openManualAdd(){
+  const today=new Date().toISOString().slice(0,10);
+  const catOpts=g=>CATS.filter(c=>c.type===g).map(c=>`<option>${c.name}</option>`).join("");
+  showModal(`
+    <h3>手入力で追加</h3>
+    <div class="note" style="margin-bottom:10px">イオン銀行など、CSVが無い取引はこちらから登録できます。</div>
+    <div class="frow"><label>日付</label><input type="date" id="aDate" value="${today}"></div>
+    <div class="frow"><label>金額(円)</label><input type="number" id="aAmt" inputmode="numeric" placeholder="例: 1500"></div>
+    <div class="frow"><label>取引先・内容</label><input type="text" id="aWho" placeholder="例: ○○医院"></div>
+    <div class="frow"><label>カテゴリ</label>
+      <select id="aCat">
+        <optgroup label="支出">${catOpts("expense")}</optgroup>
+        <optgroup label="収入">${catOpts("income")}</optgroup>
+        <optgroup label="振替">${catOpts("transfer")}</optgroup>
+      </select></div>
+    <button class="btn" id="aSave">追加する</button>
+  `);
+  el("aSave").onclick=async()=>{
+    const amt=parseAmt(el("aAmt").value);
+    const d=el("aDate").value, who=el("aWho").value.trim();
+    if(!d||!amt||!who){alert("日付・金額・取引先を入力してください");return;}
+    const cat=el("aCat").value, cd=CAT[cat];
+    await tput("tx",{
+      id:"man:"+fnv([d,amt,who,Date.now()].join("|")),
+      date:d,time:"",amount:amt,type:cd.type,
+      counterparty:who,memo:"",method:"手入力",source:"manual",
+      category:cat,taxTag:cd.taxTag||"",locked:true});
+    closeModal(); renderTab();
+  };
+}
+
+/* ---------- 取込画面 ---------- */
+function renderImport(){
+  el("view").innerHTML=`
+  <div class="card">
+    <h2>CSVファイルの取込</h2>
+    <p class="dropmsg" style="margin:4px 0 12px">対応形式:<b>PayPay取引履歴</b> / <b>三井住友銀行 入出金明細</b><br>
+    複数ファイルをまとめて選べます。同じ取引は自動で重複除外されます。</p>
+    <input type="file" id="files" accept=".csv,text/csv" multiple style="display:none">
+    <button class="btn" id="pick">ファイルを選ぶ</button>
+    <div class="implog" id="implog" style="display:none"></div>
+  </div>
+  <div class="card">
+    <h2>各サービスでのCSVの取り方</h2>
+    <p style="font-size:13px;margin:6px 0"><b>PayPay</b>:アプリ → 取引履歴 → 右上「CSV」→ メールで受取 → ファイルに保存</p>
+    <p style="font-size:13px;margin:6px 0"><b>三井住友銀行</b>:SMBCダイレクト → 入出金明細 → 「明細をダウンロード」(CSV)</p>
+    <p style="font-size:13px;margin:6px 0"><b>イオン銀行</b>:イオン銀行ダイレクト → 入出金明細照会 → CSVダウンロード。郵送の取引明細PDFは取込できないため、件数が少ない場合は明細画面の「＋」から手入力でも登録できます。</p>
+  </div>
+  <div class="card">
+    <h2>二重計上を防ぐしくみ</h2>
+    <p style="font-size:13px;margin:6px 0">PayPayでの支払いは、後日銀行口座から「PAYPAYカード」としてまとめて引き落とされます。このアプリでは<b>PayPay明細側を支出として計上</b>し、銀行側の引落は自動的に「振替(対象外)」へ分類して二重計上を防ぎます。ご本人名義間の口座振込も同様です。</p>
+  </div>`;
+  el("pick").onclick=()=>el("files").click();
+  el("files").onchange=async e=>{
+    const files=[...e.target.files]; if(!files.length)return;
+    el("pick").textContent="取込中…";
+    const log=await importFiles(files);
+    el("pick").textContent="ファイルを選ぶ";
+    const lg=el("implog");lg.style.display="block";lg.textContent=log;
+    e.target.value="";
+  };
+}
+
+/* ---------- 設定 ---------- */
+async function renderSettings(){
+  await loadRules();
+  const txs=await tall("tx");
+  el("view").innerHTML=`
+  <div class="card">
+    <h2>自動分類ルール(${rulesCache.length}件)</h2>
+    <p class="note" style="margin-top:0">取引先や摘要に含まれる文字で自動分類します。上から順に判定されます。</p>
+    <div class="frow" style="display:flex;gap:8px;margin-top:10px">
+      <input type="text" id="rKw" placeholder="キーワード(例: ○○薬局)" style="flex:1">
+      <select id="rCat">${CATS.map(c=>`<option>${c.name}</option>`).join("")}</select>
+    </div>
+    <button class="btn sub" id="rAdd">ルールを追加</button>
+    <div id="ruleList" style="margin-top:8px"></div>
+  </div>
+  <div class="card">
+    <h2>データ管理</h2>
+    <p class="note" style="margin-top:0">登録件数: ${txs.length}件。データはこのiPhoneの中だけに保存されています。機種変更前などにバックアップを保存してください。</p>
+    <button class="btn sub" id="reapply">未確定の明細にルールを再適用</button>
+    <div style="height:8px"></div>
+    <button class="btn sub" id="bkExport">バックアップを書き出す(JSON)</button>
+    <div style="height:8px"></div>
+    <input type="file" id="bkFile" accept=".json,application/json" style="display:none">
+    <button class="btn sub" id="bkImport">バックアップを読み込む</button>
+    <div style="height:8px"></div>
+    <button class="btn danger" id="wipe">全データを削除</button>
+  </div>
+  <div class="card"><h2>このアプリについて</h2>
+    <p class="note" style="margin-top:0">わが家の家計簿 Phase 1<br>
+    取込(PayPay・三井住友銀行CSV)/自動分類/月次ダッシュボード/医療費メモ。<br>
+    Phase 2で控除証明書XML取込と税計算、Phase 3でふるさと納税シミュレーションと医療費集計フォーム(Excel)出力を予定。</p></div>`;
+  const drawRules=()=>{
+    el("ruleList").innerHTML=rulesCache.map(r=>`
+      <div class="rulerow"><span class="kw">${esc(r.kw)}</span>
+      <span class="to">→ ${esc(r.cat)}</span>
+      <button data-rid="${r.rid}">削除</button></div>`).join("");
+    el("ruleList").querySelectorAll("button").forEach(b=>b.onclick=async()=>{
+      await tdel("rules",Number(b.dataset.rid));
+      await loadRules();drawRules();});
+  };
+  drawRules();
+  el("rAdd").onclick=async()=>{
+    const kw=el("rKw").value.trim(); if(!kw)return;
+    await tput("rules",{kw,cat:el("rCat").value});
+    el("rKw").value=""; await loadRules(); drawRules();
+  };
+  el("reapply").onclick=async()=>{
+    await loadRules();
+    let n=0;
+    for(const t of txs){
+      if(t.locked) continue;
+      const before=t.category;
+      categorize(t);
+      if(t.category!==before){await tput("tx",t);n++;}
+    }
+    alert(`${n}件の分類を更新しました(手動で確定済みの明細は変更しません)`);
+  };
+  el("bkExport").onclick=async()=>{
+    const data={ver:1,exported:new Date().toISOString(),tx:await tall("tx"),rules:await tall("rules")};
+    const blob=new Blob([JSON.stringify(data)],{type:"application/json"});
+    const a=document.createElement("a");
+    a.href=URL.createObjectURL(blob);
+    a.download=`kakeibo_backup_${data.exported.slice(0,10)}.json`;
+    a.click();
+  };
+  el("bkImport").onclick=()=>el("bkFile").click();
+  el("bkFile").onchange=async e=>{
+    const f=e.target.files[0]; if(!f)return;
+    try{
+      const data=JSON.parse(await f.text());
+      let n=0;
+      for(const t of (data.tx||[])){await tput("tx",t);n++;}
+      for(const r of (data.rules||[])){delete r.rid;await tput("rules",r);}
+      await loadRules();
+      alert(`バックアップから ${n}件の明細を読み込みました`);
+      renderTab();
+    }catch(err){alert("読み込みに失敗しました: "+err.message);}
+  };
+  el("wipe").onclick=async()=>{
+    if(confirm("全ての明細とルールを削除します。元に戻せません。よろしいですか?")){
+      await tclear("tx");await tclear("rules");await tclear("meta");
+      await seedIfNeeded();await loadRules();
+      alert("削除しました(初期ルールは再設定済み)");renderTab();
+    }
+  };
+}
+
+/* ---------- モーダル・タブ ---------- */
+const el=id=>document.getElementById(id);
+function showModal(html){
+  el("modalRoot").innerHTML=`<div class="modalbg" id="mbg"><div class="modal">${html}</div></div>`;
+  el("mbg").onclick=e=>{if(e.target.id==="mbg")closeModal();};
+}
+function closeModal(){el("modalRoot").innerHTML="";}
+function renderTab(){
+  document.querySelectorAll("nav.tabbar button").forEach(b=>
+    b.classList.toggle("on",b.dataset.tab===S.tab));
+  el("fab").style.display = S.tab==="list" ? "block" : "none";
+  el("hdrSub").textContent = {home:"ダッシュボード",list:"明細",import:"データ取込",settings:"設定"}[S.tab];
+  ({home:renderHome,list:renderList,import:renderImport,settings:renderSettings})[S.tab]();
+}
+document.querySelectorAll("nav.tabbar button").forEach(b=>
+  b.onclick=()=>{S.tab=b.dataset.tab;renderTab();});
+el("fab").onclick=openManualAdd;
+
+/* ---------- 起動 ---------- */
+(async()=>{
+  await openDB();
+  await seedIfNeeded();
+  await loadRules();
+  renderTab();
+  if("serviceWorker" in navigator){
+    try{ navigator.serviceWorker.register("./sw.js"); }catch(e){}
+  }
+})();
+</script>
+</body>
+</html>
