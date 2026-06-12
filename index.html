@@ -119,6 +119,12 @@ nav.tabbar .ic{font-size:21px;line-height:1;}
 .empty{text-align:center;color:var(--muted);padding:30px 10px;font-size:14px;}
 .note{font-size:12px;color:var(--muted);margin-top:8px;}
 h2.sec{font-size:14px;margin:18px 4px 8px;color:var(--ink);}
+.ttbl{font-size:13px;}
+.ttbl .r{display:flex;justify-content:space-between;gap:10px;padding:5px 0;border-bottom:1px solid var(--line);}
+.ttbl .r:last-child{border-bottom:none;}
+.ttbl .r span:last-child{font-variant-numeric:tabular-nums;white-space:nowrap;}
+.ttbl .r.sum{font-weight:700;border-top:2px solid var(--ink);border-bottom:none;padding-top:7px;}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
 </style>
 </head>
 <body>
@@ -130,6 +136,7 @@ h2.sec{font-size:14px;margin:18px 4px 8px;color:var(--ink);}
   <button data-tab="assets"><span class="ic">¥</span>資産</button>
   <button data-tab="list"><span class="ic">≣</span>明細</button>
   <button data-tab="import"><span class="ic">⇪</span>取込</button>
+  <button data-tab="tax"><span class="ic">％</span>申告</button>
   <button data-tab="settings"><span class="ic">⚙</span>設定</button>
 </nav>
 <div id="modalRoot"></div>
@@ -244,7 +251,7 @@ const SEED_RULES = [
 let db;
 function openDB(){
   return new Promise((res,rej)=>{
-    const rq = indexedDB.open("kakeibo", 2);
+    const rq = indexedDB.open("kakeibo", 3);
     rq.onupgradeneeded = e=>{
       const d = e.target.result;
       if(!d.objectStoreNames.contains("tx")){
@@ -259,6 +266,8 @@ function openDB(){
         d.createObjectStore("accounts",{keyPath:"aid",autoIncrement:true});
       if(!d.objectStoreNames.contains("bal"))
         d.createObjectStore("bal",{keyPath:"bid"});
+      if(!d.objectStoreNames.contains("tax"))
+        d.createObjectStore("tax",{keyPath:"year"});
     };
     rq.onsuccess = e=>{db=e.target.result;res();};
     rq.onerror = e=>rej(e);
@@ -603,7 +612,7 @@ function drawBars(canvas, labels, incs, exps){
 }
 
 /* ---------- 画面状態 ---------- */
-const S = { tab:"home", month:"", filterCat:"", filterMonth:"", assetMonth:"" };
+const S = { tab:"home", month:"", filterCat:"", filterMonth:"", assetMonth:"", taxYear:0 };
 
 function latestMonth(txs){
   if(!txs.length){const d=new Date();return d.toISOString().slice(0,7);}
@@ -1106,6 +1115,247 @@ async function openAccMng(){
   };
 }
 
+/* ---------- 確定申告(概算) ---------- */
+/* 税制ルールは年度別テーブルで管理。改正時はエントリを追加・修正するだけで、
+   計算ロジック本体には手を入れない。過去年分はその年のルールで計算される。 */
+const TAX_RULES = {
+  r2_6: { // 令和2〜6年分(2020〜2024)
+    label: "令和2〜6年分",
+    salary: [ // [収入上限, 率, 加算] → 控除額 = min(収入, 収入×率+加算)
+      [1625000, 0, 550000],
+      [1800000, 0.4, -100000],
+      [3600000, 0.3, 80000],
+      [6600000, 0.2, 440000],
+      [8500000, 0.1, 1100000],
+      [Infinity, 0, 1950000],
+    ],
+    base: [ // [合計所得上限, 基礎控除額]
+      [24000000, 480000],[24500000, 320000],[25000000, 160000],[Infinity, 0],
+    ],
+  },
+  r7_8: { // 令和7・8年分(2025〜2026): 給与所得控除65万・基礎控除上乗せ特例
+    label: "令和7・8年分(基礎控除の上乗せ特例あり)",
+    salary: [
+      [1900000, 0, 650000],
+      [3600000, 0.3, 80000],
+      [6600000, 0.2, 440000],
+      [8500000, 0.1, 1100000],
+      [Infinity, 0, 1950000],
+    ],
+    base: [
+      [1320000, 950000],[3360000, 880000],[4890000, 680000],[6550000, 630000],
+      [23500000, 580000],[24000000, 480000],[24500000, 320000],[25000000, 160000],[Infinity, 0],
+    ],
+  },
+  r9: { // 令和9年分以降(現行法ベース)
+    label: "令和9年分以降(現行法)",
+    salary: [
+      [1900000, 0, 650000],
+      [3600000, 0.3, 80000],
+      [6600000, 0.2, 440000],
+      [8500000, 0.1, 1100000],
+      [Infinity, 0, 1950000],
+    ],
+    base: [
+      [1320000, 950000],[23500000, 580000],[24000000, 480000],
+      [24500000, 320000],[25000000, 160000],[Infinity, 0],
+    ],
+  },
+};
+function rulesFor(year){
+  return year<=2024 ? TAX_RULES.r2_6 : year<=2026 ? TAX_RULES.r7_8 : TAX_RULES.r9;
+}
+function salaryDeduction(income, R){ // 給与所得控除
+  if(income<=0) return 0;
+  for(const [cap,r,a] of R.salary)
+    if(income<=cap) return Math.min(income, Math.floor(income*r+a));
+}
+function pensionDeduction(income, age65){ // 公的年金等控除(他の合計所得1,000万円以下/令和2年分以降共通)
+  if(income<=0) return 0;
+  if(!age65 && income<=1300000) return 600000;
+  if(age65 && income<=3300000) return 1100000;
+  if(income<=4100000) return income*0.25+275000;
+  if(income<=7700000) return income*0.15+685000;
+  if(income<=10000000) return income*0.05+1455000;
+  return 1955000;
+}
+function baseDeduction(gokei, R){ // 基礎控除
+  for(const [cap,d] of R.base) if(gokei<=cap) return d;
+}
+function seihoCalc(p){ // 生命保険料控除(新旧併用の有利判定込み)
+  const nw=x=>x<=0?0:x<=20000?x:x<=40000?x/2+10000:x<=80000?x/4+20000:40000;
+  const od=x=>x<=0?0:x<=25000?x:x<=50000?x/2+12500:x<=100000?x/4+25000:50000;
+  const branch=(n,o)=>Math.max(Math.min(40000,nw(n)+od(o)), od(o));
+  return Math.min(120000, Math.floor(branch(p.sn,p.so)+nw(p.kaigo)+branch(p.nn,p.no)));
+}
+function jishinCalc(j,kyu){ // 地震保険料控除
+  const a=Math.min(50000,j);
+  const k=kyu<=0?0:kyu<=10000?kyu:kyu<=20000?kyu/2+5000:15000;
+  return Math.min(50000,Math.floor(a+k));
+}
+function taxRate(k){ // 課税所得 → [税額, 限界税率]
+  const T=[[1950000,.05,0],[3300000,.10,97500],[6950000,.20,427500],[9000000,.23,636000],
+    [18000000,.33,1536000],[40000000,.40,2796000],[Infinity,.45,4796000]];
+  for(const [lim,r,d] of T) if(k<lim) return [Math.max(0,Math.floor(k*r-d)), r];
+}
+function yearAgg(txs,year){ // 家計簿からの年間自動集計
+  let med=0,don=0,salNet=0,penNet=0;
+  for(const t of txs){
+    if(!t.date.startsWith(year)) continue;
+    if(t.type==="expense"){
+      if(t.taxTag==="医療費") med+=t.amount;
+      if(t.taxTag==="寄附金") don+=t.amount;
+    }else if(t.type==="income"){
+      if(t.category==="給与収入") salNet+=t.amount;
+      if(t.category==="年金収入") penNet+=t.amount;
+    }
+  }
+  return {med,don,salNet,penNet};
+}
+function computeTax(year,v,agg){
+  const n=x=>Number(x)||0;
+  const R=rulesFor(year);
+  const med = (v.medOv!==""&&v.medOv!=null)?n(v.medOv):agg.med;
+  const don = (v.donOv!==""&&v.donOv!=null)?n(v.donOv):agg.don;
+  const age65 = v.age65!==false;
+  const salDed=salaryDeduction(n(v.salary),R);
+  let salInc=Math.max(0,n(v.salary)-salDed);
+  const penDed=Math.floor(pensionDeduction(n(v.pension),age65));
+  const penInc=Math.max(0,n(v.pension)-penDed);
+  const adj=(n(v.salary)>0&&n(v.pension)>0)? // 所得金額調整控除(給与・年金併用)
+    Math.max(0,Math.min(salInc,100000)+Math.min(penInc,100000)-100000):0;
+  salInc=Math.max(0,salInc-adj);
+  const gokei=salInc+penInc;
+  const medDed=Math.max(0,Math.min(2000000,(med-n(v.medHoten))-Math.min(100000,Math.floor(gokei*0.05))));
+  const seiho=seihoCalc({sn:n(v.sn),so:n(v.so),kaigo:n(v.kaigo),nn:n(v.nn),no:n(v.no)});
+  const jishin=jishinCalc(n(v.jishin),n(v.kyuChoki));
+  const donDed=don>0?Math.max(0,Math.min(don,Math.floor(gokei*0.4))-2000):0;
+  const spouse=n(v.spouse);
+  const kiso=baseDeduction(gokei,R);
+  const dedTotal=n(v.shaho)+medDed+seiho+jishin+donDed+spouse+kiso;
+  const kazei=Math.max(0,Math.floor((gokei-dedTotal)/1000)*1000);
+  const [tax0,rate]=taxRate(kazei);
+  const fukko=Math.floor(tax0*0.021);
+  const taxTotal=tax0+fukko;
+  const diff=taxTotal-n(v.genSen);
+  // 住民税所得割の概算 → ふるさと納税限度額の目安
+  const jDed=n(v.shaho)+medDed+Math.min(seiho,70000)+Math.min(Math.floor(jishin/2),25000)
+    +(spouse>0?330000:0)+430000;
+  const jKazei=Math.max(0,Math.floor((gokei-jDed)/1000)*1000);
+  const jWari=Math.max(0,Math.floor(jKazei*0.10)-2500);
+  const furuLimit=jWari>0?Math.floor(jWari*0.2/(0.9-rate*1.021))+2000:2000;
+  return {salDed,salInc,penDed,penInc,adj,gokei,med,don,medDed,seiho,jishin,donDed,spouse,kiso,
+    dedTotal,kazei,tax0,fukko,taxTotal,diff,jWari,furuLimit,shaho:n(v.shaho),ruleLabel:R.label};
+}
+async function renderTax(){
+  const txs=await tall("tx");
+  if(!S.taxYear) S.taxYear=new Date().getFullYear();
+  const y=S.taxYear;
+  let v=await tget("tax",y) || {year:y,salary:"",pension:"",age65:true,shaho:"",
+    sn:"",so:"",kaigo:"",nn:"",no:"",jishin:"",kyuChoki:"",medHoten:"",medOv:"",donOv:"",spouse:"",genSen:""};
+  const agg=yearAgg(txs,String(y));
+  el("view").innerHTML=`
+  <div class="monthnav">
+    <button id="tPrev" aria-label="前の年">‹</button>
+    <div class="label">${y}年(令和${y-2018})分</div>
+    <button id="tNext" aria-label="次の年">›</button>
+  </div>
+  <div class="card"><h2>収入(源泉徴収票の支払金額)</h2>
+    <div class="frow"><label>給与収入${agg.salNet?` <span style="color:var(--muted)">/ 参考: 振込実績(手取) ${yen(agg.salNet)}</span>`:""}</label>
+      <input type="number" inputmode="numeric" class="txin" id="t_salary" value="${v.salary}" placeholder="例: 2400000"></div>
+    <div class="frow"><label>公的年金収入${agg.penNet?` <span style="color:var(--muted)">/ 参考: 振込実績(手取) ${yen(agg.penNet)}</span>`:""}</label>
+      <input type="number" inputmode="numeric" class="txin" id="t_pension" value="${v.pension}" placeholder="例: 2500000"></div>
+    <div class="frow"><label>年齢区分(その年の12月31日時点)</label>
+      <div class="chips">
+        <button class="chip ${v.age65!==false?"on":""}" id="ageY">65歳以上</button>
+        <button class="chip ${v.age65===false?"on":""}" id="ageN">65歳未満</button>
+      </div></div>
+    <p class="note">銀行振込額は税・社会保険料を引いた手取りです。申告では源泉徴収票の「支払金額」を使います。</p>
+  </div>
+  <div class="card"><h2>所得控除</h2>
+    <div class="frow"><label>社会保険料(源泉徴収票の額+国保・任意の国民年金など)</label>
+      <input type="number" inputmode="numeric" class="txin" id="t_shaho" value="${v.shaho}"></div>
+    <label style="display:block;font-size:12px;color:var(--muted);margin:10px 0 4px">生命保険料(証明書の支払額 → 控除額は自動計算)</label>
+    <div class="grid2">
+      <input type="number" class="txin" id="t_sn" value="${v.sn}" placeholder="新生命保険料">
+      <input type="number" class="txin" id="t_so" value="${v.so}" placeholder="旧生命保険料">
+      <input type="number" class="txin" id="t_kaigo" value="${v.kaigo}" placeholder="介護医療保険料">
+      <input type="number" class="txin" id="t_nn" value="${v.nn}" placeholder="新個人年金保険料">
+      <input type="number" class="txin" id="t_no" value="${v.no}" placeholder="旧個人年金保険料">
+    </div>
+    <div class="grid2" style="margin-top:8px">
+      <input type="number" class="txin" id="t_jishin" value="${v.jishin}" placeholder="地震保険料">
+      <input type="number" class="txin" id="t_kyuChoki" value="${v.kyuChoki}" placeholder="旧長期損害保険料">
+    </div>
+    <div class="frow" style="margin-top:12px"><label>医療費 — 家計簿から自動集計: <b>${yen(agg.med)}</b></label>
+      <input type="number" class="txin" id="t_medOv" value="${v.medOv}" placeholder="金額を上書きする場合のみ入力">
+      <input type="number" class="txin" id="t_medHoten" value="${v.medHoten}" placeholder="保険金などで補填される金額" style="margin-top:6px"></div>
+    <div class="frow"><label>ふるさと納税・寄附金 — 自動集計: <b>${yen(agg.don)}</b></label>
+      <input type="number" class="txin" id="t_donOv" value="${v.donOv}" placeholder="金額を上書きする場合のみ入力"></div>
+    <div class="frow"><label>配偶者控除・配偶者特別控除</label>
+      <select class="txin" id="t_spouse">
+        <option value="">なし</option>
+        <option value="380000" ${v.spouse==380000?"selected":""}>配偶者控除 38万円</option>
+        <option value="480000" ${v.spouse==480000?"selected":""}>配偶者控除(70歳以上) 48万円</option>
+        <option value="330000" ${v.spouse==330000?"selected":""}>配偶者特別控除 33万円</option>
+      </select></div>
+    <div class="frow"><label>源泉徴収税額の合計(給与+年金の源泉徴収票)</label>
+      <input type="number" inputmode="numeric" class="txin" id="t_genSen" value="${v.genSen}"></div>
+  </div>
+  <div id="taxResult"></div>
+  <div class="card"><h2>ご注意</h2><p class="note" style="margin:0">令和7年度税制改正(基礎控除・給与所得控除の引上げ、令和7・8年分の基礎控除上乗せ特例)を反映した<b>概算</b>です。端数処理や個別事情により実際の申告額と差が出ることがあります。最終確認は国税庁「確定申告書等作成コーナー」で行ってください。</p></div>`;
+
+  const collect=()=>{
+    for(const k of ["salary","pension","shaho","sn","so","kaigo","nn","no","jishin","kyuChoki","medOv","medHoten","donOv","spouse","genSen"])
+      v[k]=el("t_"+k).value;
+  };
+  const draw=()=>{
+    const r=computeTax(y,v,agg);
+    const row=(k,val,opt)=>`<div class="r ${opt||""}"><span>${k}</span><span>${val}</span></div>`;
+    el("taxResult").innerHTML=`
+    <div class="card">
+      <div class="bigbal">
+        <div class="t">${r.diff<0?"還付の見込み":"納付の見込み"}</div>
+        <div class="v num" style="color:${r.diff<0?'var(--income)':'var(--expense)'}">${yen(Math.abs(r.diff))}</div>
+      </div>
+      <div class="ttbl">
+        ${row("給与所得(控除 "+yen(r.salDed)+(r.adj?"・調整控除 "+yen(r.adj):"")+")",yen(r.salInc))}
+        ${row("年金の雑所得(控除 "+yen(r.penDed)+")",yen(r.penInc))}
+        ${row("合計所得金額",yen(r.gokei),"sum")}
+        ${row("社会保険料控除",yen(r.shaho))}
+        ${r.seiho?row("生命保険料控除",yen(r.seiho)):""}
+        ${r.jishin?row("地震保険料控除",yen(r.jishin)):""}
+        ${r.medDed?row("医療費控除",yen(r.medDed)):""}
+        ${r.donDed?row("寄附金控除",yen(r.donDed)):""}
+        ${r.spouse?row("配偶者(特別)控除",yen(r.spouse)):""}
+        ${row("基礎控除",yen(r.kiso))}
+        ${row("所得控除の合計",yen(r.dedTotal),"sum")}
+        ${row("課税所得",yen(r.kazei))}
+        ${row("所得税+復興特別所得税",yen(r.taxTotal))}
+        ${row("源泉徴収税額",yen(Number(v.genSen)||0))}
+      </div>
+      <p class="note" style="margin:8px 0 0">適用税制: ${r.ruleLabel}</p>
+    </div>
+    <div class="card"><h2>ふるさと納税 限度額シミュレーション</h2>
+      <div style="display:flex;justify-content:space-between;align-items:baseline">
+        <div class="v num" style="font-size:20px;font-weight:700">${yen(r.furuLimit)}</div>
+        <div class="note">自己負担2,000円で済む上限の目安</div>
+      </div>
+      <div class="prog"><i style="width:${Math.min(100,r.furuLimit>0?r.don/r.furuLimit*100:0)}%;background:#3C7A55"></i></div>
+      <div class="progmeta"><span>寄附済み ${yen(r.don)}</span><span>残り ${yen(Math.max(0,r.furuLimit-r.don))}</span></div>
+      <p class="note">住民税所得割の概算(${yen(r.jWari)})に基づく目安です。</p>
+    </div>`;
+  };
+  const update=async()=>{collect(); await tput("tax",v); draw();};
+  document.querySelectorAll(".txin").forEach(i=>i.oninput=update);
+  el("t_spouse").onchange=update;
+  el("ageY").onclick=async()=>{v.age65=true;el("ageY").classList.add("on");el("ageN").classList.remove("on");await tput("tax",v);draw();};
+  el("ageN").onclick=async()=>{v.age65=false;el("ageN").classList.add("on");el("ageY").classList.remove("on");await tput("tax",v);draw();};
+  el("tPrev").onclick=()=>{S.taxYear=y-1;renderTax();};
+  el("tNext").onclick=()=>{S.taxYear=y+1;renderTax();};
+  draw();
+}
+
 /* ---------- モーダル・タブ ---------- */
 const el=id=>document.getElementById(id);
 function showModal(html){
@@ -1117,8 +1367,8 @@ function renderTab(){
   document.querySelectorAll("nav.tabbar button").forEach(b=>
     b.classList.toggle("on",b.dataset.tab===S.tab));
   el("fab").style.display = S.tab==="list" ? "block" : "none";
-  el("hdrSub").textContent = {home:"ダッシュボード",assets:"資産・負債",list:"明細",import:"データ取込",settings:"設定"}[S.tab];
-  ({home:renderHome,assets:renderAssets,list:renderList,import:renderImport,settings:renderSettings})[S.tab]();
+  el("hdrSub").textContent = {home:"ダッシュボード",assets:"資産・負債",list:"明細",import:"データ取込",tax:"確定申告(概算)",settings:"設定"}[S.tab];
+  ({home:renderHome,assets:renderAssets,list:renderList,import:renderImport,tax:renderTax,settings:renderSettings})[S.tab]();
 }
 document.querySelectorAll("nav.tabbar button").forEach(b=>
   b.onclick=()=>{S.tab=b.dataset.tab;renderTab();});
