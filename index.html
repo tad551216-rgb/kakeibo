@@ -759,14 +759,57 @@ async function openEdit(id){
   };
 }
 
+/* ---------- 話して入力(音声テキストの解析) ---------- */
+function localToday(shift){
+  const x=new Date(); if(shift) x.setDate(x.getDate()+shift);
+  return `${x.getFullYear()}-${String(x.getMonth()+1).padStart(2,"0")}-${String(x.getDate()).padStart(2,"0")}`;
+}
+const SPOKEN_KW=[
+  [/昼食|ランチ|夕食|夕飯|晩ご飯|晩御飯|朝食|モーニング|外食|食事|ディナー|カフェ|コーヒー|喫茶|ラーメン|そば|うどん|寿司/,"外食"],
+  [/食材|食料|食費|スーパー|お酒|弁当|パン|お菓子/,"食費"],
+  [/薬局|病院|診察|医院|クリニック|歯医者|歯科|医療|マッサージ|整骨|薬/,"医療・薬"],
+  [/ガソリン|給油|駐車場|駐車|高速|車検|洗車|オイル交換/,"車両費"],
+  [/日用品|洗剤|シャンプー|ティッシュ|電池|文房具/,"日用品"],
+  [/衣料|洋服|服|靴|ズボン|シャツ|クリーニング/,"衣料"],
+  [/宿|ホテル|旅行|お土産|温泉|観光/,"旅行"],
+  [/書籍|本屋|書店|映画|ゴルフ|宝くじ|ゲーム/,"娯楽"],
+  [/寄付|寄附|ふるさと納税/,"寄附・ふるさと納税"],
+  [/保険|共済/,"保険"],
+  [/電気代|ガス代|水道代|光熱/,"水道光熱"],
+];
+function parseSpoken(raw){
+  let t=(raw||"").replace(/[、。,，．.]/g," ").replace(/\s+/g," ").trim();
+  const res={amount:null,category:"",who:"",method:"",dateShift:0};
+  if(/一昨日|おととい/.test(t)){res.dateShift=-2;t=t.replace(/一昨日|おととい/g," ");}
+  else if(/昨日|きのう/.test(t)){res.dateShift=-1;t=t.replace(/昨日|きのう/g," ");}
+  t=t.replace(/今日|きょう/g," ");
+  if(/現金/.test(t)){res.method="現金";t=t.replace(/現金/g," ");}
+  let m=t.match(/([0-9][0-9,]*)\s*万\s*([0-9][0-9,]*)?\s*円?/);
+  if(m){res.amount=parseAmt(m[1])*10000+(m[2]?parseAmt(m[2]):0);t=t.replace(m[0]," ");}
+  else if((m=t.match(/([0-9][0-9,]*)\s*円/))){res.amount=parseAmt(m[1]);t=t.replace(m[0]," ");}
+  else if((m=t.match(/(?:^| )([0-9][0-9,]{2,})(?: |$)/))){res.amount=parseAmt(m[1]);t=t.replace(m[1]," ");}
+  for(const [re,cat] of SPOKEN_KW){
+    const b=new RegExp("(^|\\s)(?:"+re.source+")(?=\\s|$)"); // 前後が区切りの単独語
+    if(b.test(t)){res.category=cat;t=t.replace(b,"$1");break;}
+    if(re.test(t)){res.category=cat;break;} // 店名の一部 → 分類のみ(削除しない)
+  }
+  res.who=t.replace(/\s+/g," ").trim();
+  if(!res.category && res.who){ // 店名から既存ルールで補完
+    const hay=res.who.toLowerCase();
+    for(const r of rulesCache){ if(hay.includes(r.kw.toLowerCase())){res.category=r.cat;break;} }
+  }
+  return res;
+}
+
 /* ---------- 手入力 ---------- */
 function openManualAdd(){
-  const today=new Date().toISOString().slice(0,10);
   const catOpts=g=>CATS.filter(c=>c.type===g).map(c=>`<option>${c.name}</option>`).join("");
   showModal(`
     <h3>手入力で追加</h3>
-    <div class="note" style="margin-bottom:10px">イオン銀行など、CSVが無い取引はこちらから登録できます。</div>
-    <div class="frow"><label>日付</label><input type="date" id="aDate" value="${today}"></div>
+    <div class="frow"><label>話して入力(キーボードのマイク🎤で)</label>
+      <input type="text" id="aVoice" placeholder="例: 現金 昼食 2000円 プチグルマン" autocomplete="off"></div>
+    <div class="note" id="aParsed" style="margin:-6px 2px 12px;min-height:1.2em"></div>
+    <div class="frow"><label>日付</label><input type="date" id="aDate" value="${localToday()}"></div>
     <div class="frow"><label>金額(円)</label><input type="number" id="aAmt" inputmode="numeric" placeholder="例: 1500"></div>
     <div class="frow"><label>取引先・内容</label><input type="text" id="aWho" placeholder="例: ○○医院"></div>
     <div class="frow"><label>カテゴリ</label>
@@ -776,7 +819,19 @@ function openManualAdd(){
         <optgroup label="振替">${catOpts("transfer")}</optgroup>
       </select></div>
     <button class="btn" id="aSave">追加する</button>
+    <p class="note">話して入力のコツ:入力欄をタップしてキーボード右下のマイクを押し、「現金 昼食 2000円 〇〇」のように話すと、下の項目に自動で振り分けられます。確認・修正してから追加してください。</p>
   `);
+  let vMethod="";
+  el("aVoice").oninput=()=>{
+    const p=parseSpoken(el("aVoice").value);
+    if(p.dateShift) el("aDate").value=localToday(p.dateShift);
+    if(p.amount) el("aAmt").value=p.amount;
+    if(p.who) el("aWho").value=p.who;
+    if(p.category) el("aCat").value=p.category;
+    vMethod=p.method||"";
+    el("aParsed").textContent=(p.amount||p.who||p.category)?
+      `→ ${p.amount?yen(p.amount):"金額?"}・${p.category||"カテゴリ?"}・${p.who||"取引先?"}${p.method?`(${p.method})`:""}${p.dateShift?` [${localToday(p.dateShift).replace(/-/g,"/")}]`:""}`:"";
+  };
   el("aSave").onclick=async()=>{
     const amt=parseAmt(el("aAmt").value);
     const d=el("aDate").value, who=el("aWho").value.trim();
@@ -785,7 +840,7 @@ function openManualAdd(){
     await tput("tx",{
       id:"man:"+fnv([d,amt,who,Date.now()].join("|")),
       date:d,time:"",amount:amt,type:cd.type,
-      counterparty:who,memo:"",method:"手入力",source:"manual",
+      counterparty:who,memo:"",method:vMethod||"手入力",source:"manual",
       category:cat,taxTag:cd.taxTag||"",locked:true});
     closeModal(); renderTab();
   };
