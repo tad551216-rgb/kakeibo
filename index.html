@@ -191,7 +191,7 @@ const SEED_RULES = [
   {kw:"ｲｵﾝﾌｲﾅﾝｼﾔﾙ",      cat:"カード引落"},
   {kw:"ｶﾝｻｲﾃﾞﾝﾘﾖｸ",      cat:"水道光熱"},
   {kw:"電力",            cat:"水道光熱"},
-  {kw:"ｶﾞｽ",             cat:"水道光熱"},
+  {kw:"ｵｵｻｶｶﾞｽ",         cat:"水道光熱"},
   {kw:"大阪ガス",        cat:"水道光熱"},
   {kw:"水道",            cat:"水道光熱"},
   {kw:"ｷﾖｳｻｲ",           cat:"保険"},
@@ -294,6 +294,7 @@ async function seedIfNeeded(){
     for(const r of SEED_RULES) await tput("rules",{kw:r.kw,cat:r.cat});
     await tput("meta",{k:"seeded",v:1});
     await tput("meta",{k:"mig2",v:1}); // 新規インストールは最新ルール込みのため移行不要
+    await tput("meta",{k:"mig3",v:1});
   }
   if(!(await tget("meta","seededAcc"))){
     for(const [name,kind] of [["イオン銀行","asset"],["三井住友銀行","asset"],["財布(現金)","asset"]])
@@ -331,6 +332,24 @@ async function migrate(){
     if(t.category+"|"+t.type!==before) await tput("tx",t);
   }
   await tput("meta",{k:"mig2",v:1});
+  await migrate3();
+}
+async function migrate3(){
+  if(await tget("meta","mig3")) return;
+  // 全角半角の同一視(NFKC)導入に伴う調整:
+  // 「ｶﾞｽ」ルールが正規化で「ガスト」に誤マッチするため大阪ガス限定へ
+  for(const r of await tall("rules")){
+    if(r.kw==="ｶﾞｽ"||r.kw==="ガス"){ r.kw="ｵｵｻｶｶﾞｽ"; await tput("rules",r); }
+  }
+  await loadRules();
+  // 全角表記(イオン銀行等)が既存ルールに当たるようになるため再分類
+  for(const t of await tall("tx")){
+    if(t.locked) continue;
+    const before=t.category+"|"+t.type;
+    categorize(t);
+    if(t.category+"|"+t.type!==before) await tput("tx",t);
+  }
+  await tput("meta",{k:"mig3",v:1});
 }
 async function ensureAccount(name,kind){
   let a=(await tall("accounts")).find(x=>x.name===name);
@@ -392,6 +411,8 @@ function detectFormat(header){
   const h = header.join(",");
   if(h.includes("取引番号") && h.includes("取引先")) return "paypay";
   if(h.includes("お引出し") && h.includes("お取り扱い内容")) return "smbc";
+  if(h.includes("お取引内容") && h.includes("お引出し")) return "aeon"; // イオン銀行
+  if(h.includes("口座名") && h.includes("年月日")) return "bank"; // 汎用銀行形式
   // Olive/Vpass: 1行目が「氏名 様, 4980-09**-..., Ｏｌｉｖｅ／クレジット」形式、または日付始まりの明細行
   if(header.length>=3 && ((header[0]||"").trim().endsWith("様") || /\*\*/.test(header[1]||""))) return "olive";
   if(normDate(header[0]) && header.length>=6 && parseAmt(header[2])!=null) return "olive";
@@ -424,6 +445,66 @@ function normalizeOlive(rows){
     });
   }
   return {txs:out, excluded:0};
+}
+
+function normalizeBank(rows){ // 汎用銀行形式: 口座名,年月日,お引出し,お預入れ,摘要,残高
+  const out=[]; const bals={}; let accName="";
+  const H=rows[0]; const idx=n=>H.indexOf(n);
+  const iAcc=idx("口座名"), iDate=idx("年月日"), iOut=idx("お引出し"),
+        iIn=idx("お預入れ"), iDesc=idx("摘要"), iBal=idx("残高");
+  for(let r=1;r<rows.length;r++){
+    const c=rows[r];
+    const d=normDate(c[iDate]); if(!d) continue;
+    if(!accName) accName=(c[iAcc]||"").trim();
+    const balV=parseAmt(c[iBal]);
+    if(balV!=null){
+      const m=d.date.slice(0,7);
+      if(!bals[m] || d.date>=bals[m].date) bals[m]={date:d.date, amount:balV};
+    }
+    const outAmt=parseAmt(c[iOut]), inAmt=parseAmt(c[iIn]);
+    const desc=(c[iDesc]||"").trim();
+    let type, amount;
+    if(outAmt){type="expense";amount=outAmt;}
+    else if(inAmt){type="income";amount=inAmt;}
+    else continue;
+    out.push({
+      id:"bank:"+accName+":"+fnv([d.date,amount,desc,c[iBal]||"",type].join("|")),
+      date:d.date, time:"", amount, type,
+      counterparty:desc, memo:"", method:"口座振替/振込",
+      source:"bank", category:"", taxTag:"", locked:false
+    });
+  }
+  return {txs:out, excluded:0, bals, accName};
+}
+
+function normalizeAeonCSV(rows){ // イオン銀行: 日付,お取引内容,お引出し,お預入れ,残高(降順)
+  const out=[]; const bals={};
+  const H=rows[0].map(h=>h.trim());
+  const iDate=H.indexOf("日付"), iDesc=H.indexOf("お取引内容"),
+        iOut=H.indexOf("お引出し"), iIn=H.indexOf("お預入れ"),
+        iBal=H.findIndex(h=>h.startsWith("残高"));
+  for(let r=1;r<rows.length;r++){
+    const c=rows[r];
+    const d=normDate(c[iDate]); if(!d) continue;
+    const balV=parseAmt(c[iBal]);
+    if(balV!=null){ // 降順でも日付比較で月内最新を採用
+      const m=d.date.slice(0,7);
+      if(!bals[m] || d.date>=bals[m].date) bals[m]={date:d.date, amount:balV};
+    }
+    const outAmt=parseAmt(c[iOut]), inAmt=parseAmt(c[iIn]);
+    const desc=(c[iDesc]||"").trim();
+    let type, amount;
+    if(outAmt){type="expense";amount=outAmt;}
+    else if(inAmt){type="income";amount=inAmt;}
+    else continue;
+    out.push({
+      id:"aeon:"+fnv([d.date,amount,desc,c[iBal]||"",type].join("|")),
+      date:d.date, time:"", amount, type,
+      counterparty:desc, memo:"", method:"口座振替/振込",
+      source:"aeon", category:"", taxTag:"", locked:false
+    });
+  }
+  return {txs:out, excluded:0, bals, accName:"イオン銀行"};
 }
 
 function normalizePayPay(rows){
@@ -484,12 +565,13 @@ function normalizeSMBC(rows){
 }
 
 /* ---------- 自動分類 ---------- */
+const norm=s=>String(s||"").normalize("NFKC").toLowerCase(); // 全角半角・大小文字を同一視
 let rulesCache=[];
 async function loadRules(){ rulesCache = await tall("rules"); }
 function categorize(tx){
-  const hay = (tx.counterparty+" "+tx.memo).toLowerCase();
+  const hay = norm(tx.counterparty+" "+tx.memo);
   for(const r of rulesCache){
-    if(hay.includes(r.kw.toLowerCase())){
+    if(hay.includes(norm(r.kw))){
       tx.category=r.cat;
       const cd=CAT[r.cat];
       if(cd){ tx.type=cd.type; tx.taxTag = tx.taxTag || cd.taxTag || ""; }
@@ -516,6 +598,8 @@ async function importFiles(files){
       if(!fmt){logs.push(`✗ ${f.name}: 未対応の形式です(PayPay / 三井住友銀行のCSVに対応)`);continue;}
       const res = fmt==="paypay"?normalizePayPay(rows)
                 : fmt==="smbc"  ?normalizeSMBC(rows)
+                : fmt==="aeon"  ?normalizeAeonCSV(rows)
+                : fmt==="bank"  ?normalizeBank(rows)
                 : normalizeOlive(rows);
       const {txs,excluded} = res;
       let added=0,dup=0;
@@ -525,11 +609,14 @@ async function importFiles(files){
         await tput("tx",tx);
         existing.add(tx.id);added++;
       }
-      const fname = fmt==="paypay"?"PayPay":fmt==="smbc"?"三井住友銀行":"Olive/三井住友カード";
+      const fname = fmt==="paypay"?"PayPay":fmt==="smbc"?"三井住友銀行"
+                  :fmt==="aeon"?"イオン銀行"
+                  :fmt==="bank"?(res.accName||"銀行"):"Olive/三井住友カード";
       logs.push(`✓ ${f.name}(${fname})\n　取込 ${added}件 / 重複スキップ ${dup}件`+
         (excluded?` / ポイント行除外 ${excluded}件`:""));
-      if(fmt==="smbc" && res.bals && Object.keys(res.bals).length){
-        const acc=await ensureAccount("三井住友銀行","asset");
+      if((fmt==="smbc"||fmt==="bank"||fmt==="aeon") && res.bals && Object.keys(res.bals).length){
+        const accName = fmt==="smbc" ? "三井住友銀行" : (res.accName||"銀行口座");
+        const acc=await ensureAccount(accName,"asset");
         let nb=0;
         for(const [m,b] of Object.entries(res.bals)){
           const bid=m+":"+acc.aid;
@@ -538,7 +625,7 @@ async function importFiles(files){
           await tput("bal",{bid,month:m,aid:acc.aid,amount:b.amount,auto:true});
           nb++;
         }
-        if(nb) logs.push(`　└ 月末残高 ${nb}ヶ月分を「資産」に自動記録`);
+        if(nb) logs.push(`　└ ${accName}の月末残高 ${nb}ヶ月分を「資産」に自動記録`);
       }
     }catch(e){
       logs.push(`✗ ${f.name}: 読込エラー(${e.message||e})`);
@@ -704,7 +791,7 @@ async function renderList(){
     const cd=CAT[t.category]||{};
     const cls=t.type==="expense"?"exp":t.type==="income"?"inc":"trf";
     const sign=t.type==="expense"?"−":t.type==="income"?"+":"";
-    const src=t.source==="paypay"?"PayPay":t.source==="smbc"?"三井住友":t.source==="olive"?"Olive":"手入力";
+    const src=t.source==="paypay"?"PayPay":t.source==="smbc"?"三井住友":t.source==="olive"?"Olive":t.source==="aeon"?"イオン":t.source==="bank"?"銀行":"手入力";
     html+=`<div class="txrow" data-id="${esc(t.id)}">
       <span class="cat dot" style="background:${cd.color||"#ccc"}"></span>
       <div class="mid">
@@ -804,8 +891,8 @@ function parseSpoken(raw){
   }
   res.who=t.replace(/\s+/g," ").trim();
   if(!res.category && res.who){ // 店名から既存ルールで補完
-    const hay=res.who.toLowerCase();
-    for(const r of rulesCache){ if(hay.includes(r.kw.toLowerCase())){res.category=r.cat;break;} }
+    const hay=norm(res.who);
+    for(const r of rulesCache){ if(hay.includes(norm(r.kw))){res.category=r.cat;break;} }
   }
   return res;
 }
@@ -860,7 +947,7 @@ function renderImport(){
   el("view").innerHTML=`
   <div class="card">
     <h2>CSVファイルの取込</h2>
-    <p class="dropmsg" style="margin:4px 0 12px">対応形式:<b>PayPay取引履歴</b> / <b>三井住友銀行 入出金明細</b> / <b>Olive(三井住友カード)利用明細</b><br>
+    <p class="dropmsg" style="margin:4px 0 12px">対応形式:<b>PayPay取引履歴</b> / <b>三井住友銀行 入出金明細</b> / <b>Olive(三井住友カード)利用明細</b> / <b>イオン銀行 入出金明細</b><br>
     複数ファイルをまとめて選べます。同じ取引は自動で重複除外されます。</p>
     <input type="file" id="files" accept=".csv,text/csv" multiple style="display:none">
     <button class="btn" id="pick">ファイルを選ぶ</button>
@@ -871,7 +958,7 @@ function renderImport(){
     <p style="font-size:13px;margin:6px 0"><b>PayPay</b>:アプリ → 取引履歴 → 右上「CSV」→ メールで受取 → ファイルに保存</p>
     <p style="font-size:13px;margin:6px 0"><b>三井住友銀行</b>:SMBCダイレクト → 入出金明細 → 「明細をダウンロード」(CSV)</p>
     <p style="font-size:13px;margin:6px 0"><b>Olive(三井住友カード)</b>:Vpass → ご利用明細 → 「CSVで保存」。お支払い月ごとのファイルを毎月取り込んでください</p>
-    <p style="font-size:13px;margin:6px 0"><b>イオン銀行</b>:イオン銀行ダイレクト → 入出金明細照会 → CSVダウンロード。郵送の取引明細PDFは取込できないため、件数が少ない場合は明細画面の「＋」から手入力でも登録できます。</p>
+    <p style="font-size:13px;margin:6px 0"><b>イオン銀行</b>:イオン銀行ダイレクト → 入出金明細照会 → 期間指定 → 照会結果画面で「CSV形式」をダウンロード(前年同月以降・直近400件まで)。月末残高も自動記録されます。</p>
   </div>
   <div class="card">
     <h2>二重計上を防ぐしくみ</h2>
@@ -987,22 +1074,37 @@ async function renderAssets(){
   const accs=(await tall("accounts")).sort((a,b)=>a.aid-b.aid);
   const bals=await tall("bal");
   const txs=await tall("tx");
-  const balMap={}; // month -> aid -> bal
+  const balMap={}; // month -> aid -> bal(実記録)
   for(const b of bals){ (balMap[b.month]=balMap[b.month]||{})[b.aid]=b; }
   const months=Object.keys(balMap).sort();
   if(!S.assetMonth) S.assetMonth = months[months.length-1] || latestMonth(txs);
   const m=S.assetMonth;
 
-  const nwOf=mm=>{
-    const row=balMap[mm]||{}; let nw=0,has=false;
-    for(const a of accs){const b=row[a.aid];if(!b)continue;has=true;
-      nw += a.kind==="liability" ? -b.amount : b.amount;}
-    return has?nw:null;
+  // 残高未記録の月は直近の記録月の値を引き継ぐ
+  const byAcc={};
+  for(const b of bals){ (byAcc[b.aid]=byAcc[b.aid]||[]).push(b); }
+  for(const k in byAcc) byAcc[k].sort((a,b)=>a.month.localeCompare(b.month));
+  const eff=(mm,aid)=>{ // その月時点で有効な残高(引継ぎ込み)
+    const arr=byAcc[aid]; if(!arr) return null;
+    let best=null;
+    for(const b of arr){ if(b.month<=mm) best=b; else break; }
+    return best;
   };
-  const nw=nwOf(m), nwPrev=nwOf(shiftMonth(m,-1));
+  const nwOf=mm=>{
+    let nw=0,has=false,carried=false;
+    for(const a of accs){const b=eff(mm,a.aid);if(!b)continue;has=true;
+      if(b.month!==mm)carried=true;
+      nw += a.kind==="liability" ? -b.amount : b.amount;}
+    return has?{nw,carried}:null;
+  };
+  const nwR=nwOf(m), nwPrevR=nwOf(shiftMonth(m,-1));
+  const nw=nwR?nwR.nw:null, nwPrev=nwPrevR?nwPrevR.nw:null;
   const {inc,exp}=sumMonth(txs,m);
   const gap=(nw!=null&&nwPrev!=null)? (nwPrev+inc-exp)-nw : null;
-  const gMonths=months.slice(-8);
+  let gMonths=[];
+  if(months.length){ let mm=months[0]; const last=months[months.length-1];
+    while(mm<=last && gMonths.length<240){gMonths.push(mm); mm=shiftMonth(mm,1);} }
+  gMonths=gMonths.slice(-8);
 
   el("view").innerHTML=`
   <div class="monthnav">
@@ -1015,20 +1117,22 @@ async function renderAssets(){
       <div class="t">純資産(${monthLabel(m)}末)</div>
       <div class="v num">${nw!=null?yen(nw):"—"}</div>
       ${(nw!=null&&nwPrev!=null)?`<div class="note" style="text-align:center">前月比 <b style="color:${nw-nwPrev>=0?'var(--income)':'var(--expense)'}">${nw-nwPrev>=0?"+":""}${yen(nw-nwPrev)}</b></div>`:""}
+      ${nwR&&nwR.carried?`<div class="note" style="text-align:center">※未記録の口座は前月値を引継ぎ</div>`:""}
     </div>
   </div>
   <div class="card">
     <h2>月末残高の入力</h2>
     ${accs.map(a=>{
       const b=(balMap[m]||{})[a.aid];
+      const cb=!b?eff(m,a.aid):null;
       return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
-        <span style="flex:1;font-size:14px;font-weight:600">${esc(a.name)}${a.kind==="liability"?' <span class="srcbadge">負債</span>':""}${b&&b.auto?' <span class="srcbadge">自動</span>':""}</span>
-        <input type="number" inputmode="numeric" data-aid="${a.aid}" class="balIn" style="width:140px;text-align:right" value="${b?b.amount:""}" placeholder="未入力">
+        <span style="flex:1;font-size:14px;font-weight:600">${esc(a.name)}${a.kind==="liability"?' <span class="srcbadge">負債</span>':""}${b&&b.auto?' <span class="srcbadge">自動</span>':""}${cb?' <span class="srcbadge">引継ぎ</span>':""}</span>
+        <input type="number" inputmode="numeric" data-aid="${a.aid}" class="balIn" style="width:140px;text-align:right" value="${b?b.amount:""}" placeholder="${cb?cb.amount:"未入力"}">
       </div>`;}).join("")}
     <button class="btn" id="balSave">この月の残高を保存</button>
     <div style="height:8px"></div>
     <button class="btn sub" id="accMng">口座の追加・管理</button>
-    <p class="note">三井住友銀行はCSV取込時に自動記録されます。手入力で上書きすると、以後その月は手入力が優先されます。</p>
+    <p class="note">三井住友銀行・イオン銀行はCSV取込時に自動記録されます。手入力で上書きすると、以後その月は手入力が優先されます。残高が未記録の月は直近の記録月の値を自動で引き継いで純資産・グラフに反映します(入力欄は空のまま)。</p>
   </div>
   <div class="card">
     <h2>純資産の推移</h2>
@@ -1056,17 +1160,17 @@ async function renderAssets(){
     renderAssets();
   };
   el("accMng").onclick=openAccMng;
-  if(gMonths.length) drawStacked(el("stk"),gMonths,accs,balMap);
+  if(gMonths.length) drawStacked(el("stk"),gMonths,accs,eff);
 }
-function drawStacked(canvas,gMonths,accs,balMap){
+function drawStacked(canvas,gMonths,accs,eff){
   const dpr=window.devicePixelRatio||1;
   const w=canvas.clientWidth,h=200;
   canvas.width=w*dpr;canvas.height=h*dpr;canvas.style.height=h+"px";
   const ctx=canvas.getContext("2d");ctx.scale(dpr,dpr);
   let maxP=1,maxN=0;
   const data=gMonths.map(mm=>{
-    const row=balMap[mm]||{}; const pos=[],neg=[];
-    accs.forEach((a,i)=>{const b=row[a.aid];if(!b)return;
+    const pos=[],neg=[];
+    accs.forEach((a,i)=>{const b=eff(mm,a.aid);if(!b)return;
       (a.kind==="liability"?neg:pos).push({v:b.amount,color:ACC_COLORS[i%ACC_COLORS.length]});});
     maxP=Math.max(maxP,pos.reduce((s,x)=>s+x.v,0));
     maxN=Math.max(maxN,neg.reduce((s,x)=>s+x.v,0));
@@ -1390,6 +1494,7 @@ el("fab").onclick=openManualAdd;
   await seedIfNeeded();
   await loadRules();
   await migrate();
+  await migrate3();
   renderTab();
   if("serviceWorker" in navigator){
     try{ navigator.serviceWorker.register("./sw.js"); }catch(e){}
