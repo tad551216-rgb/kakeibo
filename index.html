@@ -1231,20 +1231,23 @@ function computeTax(year,v,agg){
   const jishin=jishinCalc(n(v.jishin),n(v.kyuChoki));
   const donDed=don>0?Math.max(0,Math.min(don,Math.floor(gokei*0.4))-2000):0;
   const spouse=n(v.spouse);
+  const fuyo=n(v.fuyo), other=n(v.other);
   const kiso=baseDeduction(gokei,R);
-  const dedTotal=n(v.shaho)+medDed+seiho+jishin+donDed+spouse+kiso;
+  const dedTotal=n(v.shaho)+medDed+seiho+jishin+donDed+spouse+fuyo+other+kiso;
   const kazei=Math.max(0,Math.floor((gokei-dedTotal)/1000)*1000);
   const [tax0,rate]=taxRate(kazei);
   const fukko=Math.floor(tax0*0.021);
   const taxTotal=tax0+fukko;
   const diff=taxTotal-n(v.genSen);
   // 住民税所得割の概算 → ふるさと納税限度額の目安
+  // (住民税側は扶養控除を一般38万→33万相当に補正)
+  const fuyoJ=Math.round(fuyo*33/38);
   const jDed=n(v.shaho)+medDed+Math.min(seiho,70000)+Math.min(Math.floor(jishin/2),25000)
-    +(spouse>0?330000:0)+430000;
+    +(spouse>0?330000:0)+fuyoJ+other+430000;
   const jKazei=Math.max(0,Math.floor((gokei-jDed)/1000)*1000);
   const jWari=Math.max(0,Math.floor(jKazei*0.10)-2500);
   const furuLimit=jWari>0?Math.floor(jWari*0.2/(0.9-rate*1.021))+2000:2000;
-  return {salDed,salInc,penDed,penInc,adj,gokei,med,don,medDed,seiho,jishin,donDed,spouse,kiso,
+  return {salDed,salInc,penDed,penInc,adj,gokei,med,don,medDed,seiho,jishin,donDed,spouse,fuyo,other,kiso,
     dedTotal,kazei,tax0,fukko,taxTotal,diff,jWari,furuLimit,shaho:n(v.shaho),ruleLabel:R.label};
 }
 async function renderTax(){
@@ -1299,6 +1302,11 @@ async function renderTax(){
         <option value="480000" ${v.spouse==480000?"selected":""}>配偶者控除(70歳以上) 48万円</option>
         <option value="330000" ${v.spouse==330000?"selected":""}>配偶者特別控除 33万円</option>
       </select></div>
+    <div class="frow"><label>扶養控除(対象者の合計額)</label>
+      <input type="number" inputmode="numeric" class="txin" id="t_fuyo" value="${v.fuyo||""}" placeholder="例: 380000">
+      <p class="note" style="margin:4px 0 0">一般(16歳以上)38万 / 特定(19〜22歳)63万 / 老人・同居58万 / 老人・別居48万。複数人いる場合は合計額を入力。対象は親族の給与年収123万円以下(令和7年分から。令和6年分以前は103万円以下)。</p></div>
+    <div class="frow"><label>その他の所得控除(iDeCo・小規模企業共済・障害者控除など)</label>
+      <input type="number" inputmode="numeric" class="txin" id="t_other" value="${v.other||""}"></div>
     <div class="frow"><label>源泉徴収税額の合計(給与+年金の源泉徴収票)</label>
       <input type="number" inputmode="numeric" class="txin" id="t_genSen" value="${v.genSen}"></div>
   </div>
@@ -1306,7 +1314,7 @@ async function renderTax(){
   <div class="card"><h2>ご注意</h2><p class="note" style="margin:0">令和7年度税制改正(基礎控除・給与所得控除の引上げ、令和7・8年分の基礎控除上乗せ特例)を反映した<b>概算</b>です。端数処理や個別事情により実際の申告額と差が出ることがあります。最終確認は国税庁「確定申告書等作成コーナー」で行ってください。</p></div>`;
 
   const collect=()=>{
-    for(const k of ["salary","pension","shaho","sn","so","kaigo","nn","no","jishin","kyuChoki","medOv","medHoten","donOv","spouse","genSen"])
+    for(const k of ["salary","pension","shaho","sn","so","kaigo","nn","no","jishin","kyuChoki","medOv","medHoten","donOv","spouse","fuyo","other","genSen"])
       v[k]=el("t_"+k).value;
   };
   const draw=()=>{
@@ -1328,6 +1336,8 @@ async function renderTax(){
         ${r.medDed?row("医療費控除",yen(r.medDed)):""}
         ${r.donDed?row("寄附金控除",yen(r.donDed)):""}
         ${r.spouse?row("配偶者(特別)控除",yen(r.spouse)):""}
+        ${r.fuyo?row("扶養控除",yen(r.fuyo)):""}
+        ${r.other?row("その他の控除",yen(r.other)):""}
         ${row("基礎控除",yen(r.kiso))}
         ${row("所得控除の合計",yen(r.dedTotal),"sum")}
         ${row("課税所得",yen(r.kazei))}
