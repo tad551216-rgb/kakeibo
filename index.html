@@ -38,7 +38,8 @@ main{padding:0 14px 24px;max-width:680px;margin:0 auto;}
 .monthnav .label{font-size:19px;font-weight:700;min-width:140px;text-align:center;letter-spacing:.03em;}
 /* 収支サマリ */
 .balrow{display:flex;gap:10px;}
-.balrow .cell{flex:1;text-align:center;}
+.balrow .cell{flex:1;text-align:center;border-radius:10px;padding:4px 0;cursor:pointer;border:1px solid transparent;}
+.balrow .cell.selcell{background:var(--bg);border-color:var(--line);}
 .balrow .t{font-size:12px;color:var(--muted);}
 .balrow .v{font-size:18px;font-weight:700;}
 .v.inc{color:var(--income);} .v.exp{color:var(--expense);}
@@ -710,7 +711,7 @@ function drawBars(canvas, labels, incs, exps){
 }
 
 /* ---------- 画面状態 ---------- */
-const S = { tab:"home", month:"", filterCat:"", filterMonth:"", assetMonth:"", taxYear:0 };
+const S = { tab:"home", month:"", homeMode:"expense", filterCat:"", filterMonth:"", assetMonth:"", taxYear:0 };
 
 function latestMonth(txs){
   if(!txs.length){const d=new Date();return d.toISOString().slice(0,7);}
@@ -731,6 +732,15 @@ async function renderHome(){
   const bal=inc-exp;
   const items=Object.entries(byCat).sort((a,b)=>b[1]-a[1])
     .map(([k,v])=>({k,v,color:(CAT[k]||{}).color||"#9AA0A6"}));
+  // 収入カテゴリ別
+  const incByCat={};
+  for(const t of txs){ if(monthOf(t.date)!==S.month) continue;
+    if(t.type==="income") incByCat[t.category]=(incByCat[t.category]||0)+t.amount; }
+  const incItems=Object.entries(incByCat).sort((a,b)=>b[1]-a[1])
+    .map(([k,v])=>({k,v,color:(CAT[k]||{}).color||"#9AA0A6"}));
+  const mode=S.homeMode||"expense"; // expense | income
+  const dispItems = mode==="income"?incItems:items;
+  const dispTotal = mode==="income"?inc:exp;
   // 6ヶ月推移
   const months=[];for(let i=5;i>=0;i--)months.push(shiftMonth(S.month,-i));
   const incs=months.map(m=>sumMonth(txs,m).inc), exps=months.map(m=>sumMonth(txs,m).exp);
@@ -750,17 +760,17 @@ async function renderHome(){
       <div class="v num" style="color:${bal>=0?'var(--income)':'var(--expense)'}">${bal>=0?"+":""}${yen(bal)}</div>
     </div>
     <div class="balrow">
-      <div class="cell"><div class="t">収入</div><div class="v inc num">${yen(inc)}</div></div>
-      <div class="cell"><div class="t">支出</div><div class="v exp num">${yen(exp)}</div></div>
+      <div class="cell ${mode==="income"?"selcell":""}" id="cellInc"><div class="t">収入</div><div class="v inc num">${yen(inc)}</div></div>
+      <div class="cell ${mode==="expense"?"selcell":""}" id="cellExp"><div class="t">支出</div><div class="v exp num">${yen(exp)}</div></div>
     </div>
   </div>
   <div class="card">
-    <h2>支出の内訳</h2>
-    ${txs.length? `<canvas id="donut"></canvas>
-    <div class="legend">${items.map(i=>`
+    <h2>${mode==="income"?"収入":"支出"}の内訳</h2>
+    ${txs.length&&dispItems.length? `<canvas id="donut"></canvas>
+    <div class="legend">${dispItems.map(i=>`
       <div class="li"><div class="nm"><span class="dot" style="background:${i.color}"></span><span class="txt">${esc(i.k)}</span></div>
       <div class="amt num">${yen(i.v)}</div></div>`).join("")}</div>`
-    : `<div class="empty">まだデータがありません。<br>「取込」タブからCSVを読み込んでください。</div>`}
+    : `<div class="empty">${txs.length?`この月の${mode==="income"?"収入":"支出"}はありません`:`まだデータがありません。<br>「取込」タブからCSVを読み込んでください。`}</div>`}
   </div>
   <div class="card">
     <h2>収入と支出の推移(6ヶ月)</h2>
@@ -778,7 +788,9 @@ async function renderHome(){
   </div>`;
   el("mPrev").onclick=()=>{S.month=shiftMonth(S.month,-1);renderHome();};
   el("mNext").onclick=()=>{S.month=shiftMonth(S.month,1);renderHome();};
-  if(txs.length) drawDonut(el("donut"),items,"支出合計",yen(exp));
+  el("cellInc").onclick=()=>{S.homeMode="income";renderHome();};
+  el("cellExp").onclick=()=>{S.homeMode="expense";renderHome();};
+  if(txs.length&&dispItems.length) drawDonut(el("donut"),dispItems,mode==="income"?"収入合計":"支出合計",yen(dispTotal));
   drawBars(el("bars"),months.map(m=>Number(m.slice(5))+"月"),incs,exps);
 }
 
