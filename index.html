@@ -587,15 +587,17 @@ function categorize(tx){
 async function importFiles(files){
   await loadRules();
   const existing = new Set((await tall("tx")).map(t=>t.id));
-  const logs=[];
+  const logs=[]; const hist=[];
   for(const f of files){
     try{
       const buf=await f.arrayBuffer();
       const text=decodeBuf(buf);
       const rows=parseCSV(text);
-      if(!rows.length){logs.push(`✗ ${f.name}: 空のファイル`);continue;}
+      if(!rows.length){logs.push(`✗ ${f.name}: 空のファイル`);
+        hist.push({ts:Date.now(),file:f.name,err:"空のファイル"});continue;}
       const fmt=detectFormat(rows[0]);
-      if(!fmt){logs.push(`✗ ${f.name}: 未対応の形式です(PayPay / 三井住友銀行のCSVに対応)`);continue;}
+      if(!fmt){logs.push(`✗ ${f.name}: 未対応の形式です(PayPay / 三井住友銀行 / Olive / イオン銀行のCSVに対応)`);
+        hist.push({ts:Date.now(),file:f.name,err:"未対応の形式"});continue;}
       const res = fmt==="paypay"?normalizePayPay(rows)
                 : fmt==="smbc"  ?normalizeSMBC(rows)
                 : fmt==="aeon"  ?normalizeAeonCSV(rows)
@@ -614,6 +616,7 @@ async function importFiles(files){
                   :fmt==="bank"?(res.accName||"銀行"):"Olive/三井住友カード";
       logs.push(`✓ ${f.name}(${fname})\n　取込 ${added}件 / 重複スキップ ${dup}件`+
         (excluded?` / ポイント行除外 ${excluded}件`:""));
+      let balN=0, balAcc="";
       if((fmt==="smbc"||fmt==="bank"||fmt==="aeon") && res.bals && Object.keys(res.bals).length){
         const accName = fmt==="smbc" ? "三井住友銀行" : (res.accName||"銀行口座");
         const acc=await ensureAccount(accName,"asset");
@@ -626,10 +629,18 @@ async function importFiles(files){
           nb++;
         }
         if(nb) logs.push(`　└ ${accName}の月末残高 ${nb}ヶ月分を「資産」に自動記録`);
+        balN=nb; balAcc=accName;
       }
+      hist.push({ts:Date.now(),file:f.name,fmt:fname,added,dup,excluded,balN});
     }catch(e){
       logs.push(`✗ ${f.name}: 読込エラー(${e.message||e})`);
+      hist.push({ts:Date.now(),file:f.name,err:"読込エラー"});
     }
+  }
+  if(hist.length){
+    const ex=(await tget("meta","importLog"));
+    const old=(ex&&ex.v)||[];
+    await tput("meta",{k:"importLog",v:hist.reverse().concat(old).slice(0,100)});
   }
   return logs.join("\n");
 }
@@ -943,7 +954,22 @@ function openManualAdd(){
 }
 
 /* ---------- 取込画面 ---------- */
-function renderImport(){
+async function renderImport(){
+  const lg=await tget("meta","importLog");
+  const log=(lg&&lg.v)||[];
+  const fmtTs=ts=>{const d=new Date(ts);
+    return `${d.getFullYear()}/${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`;};
+  const histHtml = log.length ? log.slice(0,30).map(e=>`
+    <div class="rulerow">
+      <div style="flex:1;min-width:0">
+        <div style="font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(e.file)}</div>
+        <div style="font-size:11px;color:var(--muted)">${fmtTs(e.ts)}${e.fmt?` ・ ${esc(e.fmt)}`:""}</div>
+      </div>
+      <span class="to" style="white-space:nowrap;${e.err?"color:var(--expense)":""}">${
+        e.err?esc(e.err):`取込${e.added}件`+(e.dup?` / 重複${e.dup}`:"")+(e.excluded?` / 除外${e.excluded}`:"")+(e.balN?` / 残高${e.balN}月`:"")
+      }</span>
+    </div>`).join("")
+    : `<p class="note" style="margin:0">まだ取込履歴はありません(この機能の追加後の取込から記録されます)。</p>`;
   el("view").innerHTML=`
   <div class="card">
     <h2>CSVファイルの取込</h2>
@@ -952,6 +978,11 @@ function renderImport(){
     <input type="file" id="files" accept=".csv,text/csv" multiple style="display:none">
     <button class="btn" id="pick">ファイルを選ぶ</button>
     <div class="implog" id="implog" style="display:none"></div>
+  </div>
+  <div class="card">
+    <h2>取込履歴${log.length?`(直近${Math.min(log.length,30)}件)`:""}</h2>
+    ${histHtml}
+    ${log.length?`<button class="btn sub small" id="histClear" style="margin-top:10px">履歴を消去</button>`:""}
   </div>
   <div class="card">
     <h2>各サービスでのCSVの取り方</h2>
@@ -968,10 +999,16 @@ function renderImport(){
   el("files").onchange=async e=>{
     const files=[...e.target.files]; if(!files.length)return;
     el("pick").textContent="取込中…";
-    const log=await importFiles(files);
+    const log2=await importFiles(files);
     el("pick").textContent="ファイルを選ぶ";
-    const lg=el("implog");lg.style.display="block";lg.textContent=log;
     e.target.value="";
+    await renderImport(); // 履歴を含めて再描画
+    const lg2=el("implog");lg2.style.display="block";lg2.textContent=log2;
+  };
+  if(el("histClear")) el("histClear").onclick=async()=>{
+    if(!confirm("取込履歴を消去します(明細データは削除されません)。よろしいですか?"))return;
+    await tput("meta",{k:"importLog",v:[]});
+    renderImport();
   };
 }
 
