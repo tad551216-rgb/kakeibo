@@ -36,6 +36,11 @@ main{padding:0 14px 24px;max-width:680px;margin:0 auto;}
 .monthnav button{border:1px solid var(--line);background:var(--surface);border-radius:10px;
   width:38px;height:38px;font-size:18px;color:var(--ink);}
 .monthnav .label{font-size:19px;font-weight:700;min-width:140px;text-align:center;letter-spacing:.03em;}
+.monthnav .label.tappable{cursor:pointer;border-radius:8px;padding:2px 10px;}
+.monthnav .label.tappable:active{background:var(--surface);}
+.monthnav select.navsel{font-size:19px;font-weight:700;text-align:center;text-align-last:center;
+  border:none;background:transparent;color:var(--ink);letter-spacing:.03em;
+  -webkit-appearance:none;appearance:none;padding:2px 8px;min-width:150px;}
 /* 収支サマリ */
 .balrow{display:flex;gap:10px;}
 .balrow .cell{flex:1;text-align:center;border-radius:10px;padding:4px 0;cursor:pointer;border:1px solid transparent;}
@@ -808,6 +813,19 @@ function shiftMonth(m,delta){
 }
 const monthLabel = m => m? `${m.slice(0,4)}年${Number(m.slice(5))}月` : "";
 
+/* ---------- 月・年プルダウンの選択肢生成(データのある年月のみ) ---------- */
+function monthOptions(current, availMonths){
+  const set=new Set(availMonths||[]);
+  set.add(current); // 現在選択中の月は必ず含める
+  const months=[...set].sort().reverse();
+  return months.map(mm=>`<option value="${mm}" ${mm===current?"selected":""}>${monthLabel(mm)}</option>`).join("");
+}
+function yearOptions(current, availYears){
+  const set=new Set(availYears||[]);
+  set.add(current);
+  return [...set].sort((a,b)=>b-a).map(y=>`<option value="${y}" ${y===current?"selected":""}>${y}年(令和${y-2018})分</option>`).join("");
+}
+
 /* ---------- ホーム ---------- */
 async function renderHome(){
   const txs=await allTx();
@@ -835,7 +853,7 @@ async function renderHome(){
   el("view").innerHTML = `
   <div class="monthnav">
     <button id="mPrev" aria-label="前の月">‹</button>
-    <div class="label">${monthLabel(S.month)}</div>
+    <select class="navsel" id="mLabel">${monthOptions(S.month,[...new Set(txs.map(t=>monthOf(t.date)))])}</select>
     <button id="mNext" aria-label="次の月">›</button>
   </div>
   <div class="card">
@@ -872,6 +890,7 @@ async function renderHome(){
   </div>`;
   el("mPrev").onclick=()=>{S.month=shiftMonth(S.month,-1);renderHome();};
   el("mNext").onclick=()=>{S.month=shiftMonth(S.month,1);renderHome();};
+  el("mLabel").onchange=e=>{S.month=e.target.value;renderHome();};
   el("cellInc").onclick=()=>{S.homeMode="income";renderHome();};
   el("cellExp").onclick=()=>{S.homeMode="expense";renderHome();};
   if(txs.length&&dispItems.length) drawDonut(el("donut"),dispItems,mode==="income"?"収入合計":"支出合計",yen(dispTotal));
@@ -1234,15 +1253,15 @@ async function renderAssets(){
   const nw=nwR?nwR.nw:null, nwPrev=nwPrevR?nwPrevR.nw:null;
   const {inc,exp}=sumMonth(txs,m);
   const gap=(nw!=null&&nwPrev!=null)? (nwPrev+inc-exp)-nw : null;
-  let gMonths=[];
+  let allMonths=[];
   if(months.length){ let mm=months[0]; const last=months[months.length-1];
-    while(mm<=last && gMonths.length<240){gMonths.push(mm); mm=shiftMonth(mm,1);} }
-  gMonths=gMonths.slice(-8);
+    while(mm<=last && allMonths.length<240){allMonths.push(mm); mm=shiftMonth(mm,1);} }
+  let gMonths=allMonths.slice(-8);
 
   el("view").innerHTML=`
   <div class="monthnav">
     <button id="aPrev" aria-label="前の月">‹</button>
-    <div class="label">${monthLabel(m)}</div>
+    <select class="navsel" id="aLabel">${monthOptions(m,allMonths)}</select>
     <button id="aNext" aria-label="次の月">›</button>
   </div>
   <div class="card">
@@ -1283,6 +1302,7 @@ async function renderAssets(){
   </div>`;
   el("aPrev").onclick=()=>{S.assetMonth=shiftMonth(m,-1);renderAssets();};
   el("aNext").onclick=()=>{S.assetMonth=shiftMonth(m,1);renderAssets();};
+  el("aLabel").onchange=e=>{S.assetMonth=e.target.value;renderAssets();};
   el("balSave").onclick=async()=>{
     for(const inp of document.querySelectorAll(".balIn")){
       const aid=Number(inp.dataset.aid), bid=m+":"+aid, v=inp.value.trim();
@@ -1497,7 +1517,7 @@ async function renderTax(){
   el("view").innerHTML=`
   <div class="monthnav">
     <button id="tPrev" aria-label="前の年">‹</button>
-    <div class="label">${y}年(令和${y-2018})分</div>
+    <select class="navsel" id="tLabel">${yearOptions(y,[...new Set(txs.map(t=>Number(t.date.slice(0,4))))])}</select>
     <button id="tNext" aria-label="次の年">›</button>
   </div>
   <div class="card"><h2>収入(源泉徴収票の支払金額)</h2>
@@ -1600,6 +1620,7 @@ async function renderTax(){
   el("ageN").onclick=async()=>{v.age65=false;el("ageN").classList.add("on");el("ageY").classList.remove("on");await tput("tax",v);draw();};
   el("tPrev").onclick=()=>{S.taxYear=y-1;renderTax();};
   el("tNext").onclick=()=>{S.taxYear=y+1;renderTax();};
+  el("tLabel").onchange=e=>{S.taxYear=Number(e.target.value);renderTax();};
   draw();
 }
 
