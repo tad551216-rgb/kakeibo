@@ -798,8 +798,12 @@ async function importFiles(files){
         for(const [m,b] of Object.entries(res.bals)){
           const bid=m+":"+acc.aid;
           const ex=await tget("bal",bid);
-          if(ex && ex.auto===false) continue; // 手入力済みは上書きしない
-          await tput("bal",{bid,month:m,aid:acc.aid,amount:b.amount,auto:true});
+          // 既存が手入力(auto:false)でも、CSVの残高がより新しい取引日なら更新する
+          if(ex && ex.auto===false){
+            const exAsof=ex.asof||(ex.month+"-01"); // 旧データはasof不明→月初扱い
+            if(b.date<=exAsof) continue; // CSVの方が古ければ手入力を尊重
+          }
+          await tput("bal",{bid,month:m,aid:acc.aid,amount:b.amount,auto:true,asof:b.date});
           nb++;
         }
         if(nb) logs.push(`　└ ${accName}の月末残高 ${nb}ヶ月分を「資産」に自動記録`);
@@ -1410,11 +1414,16 @@ async function renderAssets(){
   el("aNext").onclick=()=>{S.assetMonth=shiftMonth(m,1);renderAssets();};
   el("aLabel").onchange=e=>{S.assetMonth=e.target.value;renderAssets();};
   el("balSave").onclick=async()=>{
+    const today=localToday();
+    const monthEnd=(()=>{const [yy,mo]=m.split("-").map(Number);const d=new Date(yy,mo,0);
+      return `${yy}-${String(mo).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;})();
+    // 当月なら今日、過去月ならその月末を「残高時点」とする
+    const asof = m===today.slice(0,7) ? today : (today.slice(0,7)>m ? monthEnd : today);
     for(const inp of document.querySelectorAll(".balIn")){
       const aid=Number(inp.dataset.aid), bid=m+":"+aid, v=inp.value.trim();
       if(v===""){ if(await tget("bal",bid)) await tdel("bal",bid); continue; }
       const n=Number(v); if(isNaN(n)) continue;
-      await tput("bal",{bid,month:m,aid,amount:n,auto:false});
+      await tput("bal",{bid,month:m,aid,amount:n,auto:false,asof});
     }
     renderAssets();
   };
