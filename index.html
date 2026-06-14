@@ -797,12 +797,7 @@ async function importFiles(files){
         let nb=0;
         for(const [m,b] of Object.entries(res.bals)){
           const bid=m+":"+acc.aid;
-          const ex=await tget("bal",bid);
-          // 既存が手入力(auto:false)でも、CSVの残高がより新しい取引日なら更新する
-          if(ex && ex.auto===false){
-            const exAsof=ex.asof||(ex.month+"-01"); // 旧データはasof不明→月初扱い
-            if(b.date<=exAsof) continue; // CSVの方が古ければ手入力を尊重
-          }
+          // 銀行口座は常にCSVの残高を優先(手入力の食い違いを残さない)
           await tput("bal",{bid,month:m,aid:acc.aid,amount:b.amount,auto:true,asof:b.date});
           nb++;
         }
@@ -813,17 +808,14 @@ async function importFiles(files){
       if(res.bill && res.bill.amount>0){
         const liab=await ensureAccount("カード未払金","liability");
         const bid=res.bill.month+":"+liab.aid;
-        const ex=await tget("bal",bid);
         // 同月に複数カードがある場合は合算(カード別の内訳をmetaに保持)
         const slotKey="cardbill:"+res.bill.month;
         const slot=(await tget("meta",slotKey))?.v || {};
         slot[res.bill.card]=res.bill.amount;
         await tput("meta",{k:slotKey,v:slot});
         const sum=Object.values(slot).reduce((s,v)=>s+v,0);
-        if(!(ex && ex.auto===false)){ // 手入力済みは尊重
-          await tput("bal",{bid,month:res.bill.month,aid:liab.aid,amount:sum,auto:true});
-          logs.push(`　└ ${res.bill.card}の請求額 ${yen(res.bill.amount)} を「カード未払金(負債)」に記録`);
-        }
+        await tput("bal",{bid,month:res.bill.month,aid:liab.aid,amount:sum,auto:true});
+        logs.push(`　└ ${res.bill.card}の請求額 ${yen(res.bill.amount)} を「カード未払金(負債)」に記録`);
       }
       hist.push({ts:Date.now(),file:f.name,fmt:fname,added,dup,excluded,balN});
     }catch(e){
@@ -1386,15 +1378,24 @@ async function renderAssets(){
     <h2>月末残高の入力</h2>
     ${accs.map(a=>{
       const b=(balMap[m]||{})[a.aid];
-      const cb=!b?eff(m,a.aid):null;
+      const isAuto=(byAcc[a.aid]||[]).some(x=>x.auto); // CSV自動記録のある口座
+      const cb=!b?eff(m,a.aid,a.kind==="liability"&&a.name==="カード未払金"):null;
+      const nameTags=`${esc(a.name)}${a.kind==="liability"?' <span class="srcbadge">負債</span>':""}${isAuto?' <span class="srcbadge">自動</span>':(cb?' <span class="srcbadge">引継ぎ</span>':"")}`;
+      if(isAuto){ // 自動口座: 入力不可・CSVの自動値を表示するだけ
+        const shown=b?b.amount:(cb?cb.amount:null);
+        return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+          <span style="flex:1;font-size:14px;font-weight:600">${nameTags}</span>
+          <span style="width:140px;text-align:right;font-size:15px;font-weight:700;color:${shown!=null?'var(--ink)':'var(--muted)'};font-variant-numeric:tabular-nums">${shown!=null?shown.toLocaleString():"—"}</span>
+        </div>`;
+      }
       return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
-        <span style="flex:1;font-size:14px;font-weight:600">${esc(a.name)}${a.kind==="liability"?' <span class="srcbadge">負債</span>':""}${b&&b.auto?' <span class="srcbadge">自動</span>':""}${cb?' <span class="srcbadge">引継ぎ</span>':""}</span>
+        <span style="flex:1;font-size:14px;font-weight:600">${nameTags}</span>
         <input type="number" inputmode="numeric" data-aid="${a.aid}" class="balIn" style="width:140px;text-align:right" value="${b?b.amount:""}" placeholder="${cb?cb.amount:"未入力"}">
       </div>`;}).join("")}
     <button class="btn" id="balSave">この月の残高を保存</button>
     <div style="height:8px"></div>
     <button class="btn sub" id="accMng">口座の追加・管理</button>
-    <p class="note">三井住友銀行・イオン銀行はCSV取込時に自動記録されます。手入力で上書きすると、以後その月は手入力が優先されます。残高が未記録の月は直近の記録月の値を自動で引き継いで純資産・グラフに反映します(入力欄は空のまま)。セゾン・Oliveの請求額は「カード未払金(負債)」として自動で差し引かれます。</p>
+    <p class="note">三井住友銀行・イオン銀行とカード未払金(自動)はCSV取込時に自動記録され、常に最新のCSV残高が優先されます(手入力不可)。財布・修繕積立金などCSVのない口座は手入力してください。残高が未記録の月は直近の記録月の値を引き継いで反映します。</p>
   </div>
   <div class="card">
     <h2>純資産の推移</h2>
