@@ -196,7 +196,8 @@ const SEED_RULES = [
   {kw:"ｾｿﾞﾝ",            cat:"振替(対象外)"},   // セゾン明細側で計上するため
   {kw:"セゾン",          cat:"振替(対象外)"},
   {kw:"ﾐﾂｲｽﾐﾄﾓｶ-ﾄﾞ",     cat:"振替(対象外)"},   // Olive明細側で計上するため
-  {kw:"ｲｵﾝﾌｲﾅﾝｼﾔﾙ",      cat:"カード引落"},
+  {kw:"ｲｵﾝﾌｲﾅﾝｼﾔﾙ",      cat:"振替(対象外)"},   // イオンカード明細側で計上するため
+  {kw:"イオンフィナンシャル",cat:"振替(対象外)"},
   {kw:"ｶﾝｻｲﾃﾞﾝﾘﾖｸ",      cat:"水道光熱"},
   {kw:"電力",            cat:"水道光熱"},
   {kw:"ｵｵｻｶｶﾞｽ",         cat:"水道光熱"},
@@ -295,6 +296,11 @@ const SEED_RULES = [
   {kw:"ﾕ-ﾈｸｽﾄ",          cat:"通信・サブスク"},
   {kw:"U-NEXT",          cat:"通信・サブスク"},
   {kw:"ガスステーション",cat:"車両費"},
+  {kw:"オプテージ",      cat:"通信・サブスク"},
+  {kw:"フェリ",          cat:"旅行"},
+  {kw:"ﾌｴﾘ",             cat:"旅行"},
+  {kw:"ビューティ",      cat:"その他支出"},
+  {kw:"ﾋﾞﾕｰﾃｲ",          cat:"その他支出"},
   {kw:"ガソリン",        cat:"車両費"},
   {kw:"ららぽ",          cat:"食費"},
   {kw:"コストコ",        cat:"食費"},
@@ -352,6 +358,7 @@ async function seedIfNeeded(){
     await tput("meta",{k:"mig4",v:1});
     await tput("meta",{k:"mig5",v:1});
     await tput("meta",{k:"mig6",v:1});
+    await tput("meta",{k:"mig7",v:1});
   }
   if(!(await tget("meta","seededAcc"))){
     for(const [name,kind] of [["イオン銀行","asset"],["三井住友銀行","asset"],["財布(現金)","asset"]])
@@ -468,6 +475,26 @@ async function migrate6(){
     if(t.category+"|"+t.type!==before) await tput("tx",t);
   }
   await tput("meta",{k:"mig6",v:1});
+  await migrate7();
+}
+async function migrate7(){
+  if(await tget("meta","mig7")) return;
+  const existingKw=new Set();
+  for(const r of await tall("rules")){
+    existingKw.add(r.kw);
+    if(r.kw==="ｲｵﾝﾌｲﾅﾝｼﾔﾙ" && r.cat!=="振替(対象外)"){ r.cat="振替(対象外)"; await tput("rules",r); }
+  }
+  const add=[["イオンフィナンシャル","振替(対象外)"],["オプテージ","通信・サブスク"],
+    ["フェリ","旅行"],["ﾌｴﾘ","旅行"],["ビューティ","その他支出"],["ﾋﾞﾕｰﾃｲ","その他支出"]];
+  for(const [kw,cat] of add) if(!existingKw.has(kw)) await tput("rules",{kw,cat});
+  await loadRules();
+  for(const t of await tall("tx")){
+    if(t.locked) continue;
+    const before=t.category+"|"+t.type;
+    categorize(t);
+    if(t.category+"|"+t.type!==before) await tput("tx",t);
+  }
+  await tput("meta",{k:"mig7",v:1});
 }
 async function ensureAccount(name,kind){
   let a=(await tall("accounts")).find(x=>x.name===name);
@@ -534,6 +561,10 @@ function detectFormat(header){
   // セゾン: 1行目が「カード名称,...」、または明細ヘッダーに「ご利用店名」
   if((header[0]||"").trim()==="カード名称") return "saison";
   if(h.includes("ご利用店名") && h.includes("利用金額")) return "saison";
+  // PayPayカード(クレジット)請求明細: 利用日/キャンセル日 + 支払総額 + 当月お支払日
+  if(h.includes("利用日/キャンセル日") && h.includes("当月お支払日")) return "ppcard";
+  // イオンカード利用明細: 1行目「ご利用カード」+「今回ご請求金額」ヘッダー
+  if((header[0]||"").trim()==="ご利用カード") return "aeoncard";
   // Olive/Vpass: 1行目が「氏名 様, 4980-09**-..., Ｏｌｉｖｅ／クレジット」形式、または日付始まりの明細行
   if(header.length>=3 && ((header[0]||"").trim().endsWith("様") || /\*\*/.test(header[1]||""))) return "olive";
   if(normDate(header[0]) && header.length>=6 && parseAmt(header[2])!=null) return "olive";
@@ -703,6 +734,80 @@ function normalizePayPay(rows){
   return {txs:out, excluded};
 }
 
+function normalizeAeonCard(rows){ // イオンカード利用明細
+  const out=[]; const seen={}; let billAmt=null, payDate=null;
+  // ヘッダー部から請求額・支払日を取得
+  for(let i=0;i<rows.length;i++){
+    const k=(rows[i][0]||"").trim();
+    if(k==="今回ご請求金額") billAmt=parseAmt(rows[i][1]);
+    if(k==="お支払い日"){ // 「2026年 5月 7日」形式
+      const m=String(rows[i][1]||"").match(/(\d{4})\D+(\d{1,2})\D+(\d{1,2})/);
+      if(m) payDate=`${m[1]}-${m[2].padStart(2,"0")}-${m[3].padStart(2,"0")}`;
+    }
+    if(k==="ご利用日") break; // 明細ヘッダーに到達
+  }
+  // 「ご利用明細」セクションのヘッダー行を探す
+  let hi=-1;
+  for(let i=0;i<rows.length;i++){
+    if((rows[i][0]||"").trim()==="ご利用日" && (rows[i][2]||"").includes("ご利用先")){ hi=i; break; }
+  }
+  if(hi<0) return {txs:out, excluded:0};
+  for(let r=hi+1;r<rows.length;r++){
+    const c=rows[r];
+    const c0=(c[0]||"").trim();
+    // 「分割・ボーナス払い明細」セクション以降は別構造なので終了
+    if(c0.includes("分割")||c0.includes("ボーナス")) break;
+    // YYMMDD(6桁)の日付
+    const m=c0.match(/^(\d{2})(\d{2})(\d{2})$/);
+    if(!m) continue;
+    const date=`20${m[1]}-${m[2]}-${m[3]}`;
+    const who=(c[2]||"").trim();
+    const amount=parseAmt(c[6]); if(amount==null) continue;
+    const key=[date,who,amount].join("|");
+    seen[key]=(seen[key]||0)+1;
+    out.push({
+      id:"aeoncard:"+fnv(key)+"-"+seen[key],
+      date, time:"", amount, type:"expense",
+      counterparty:who, memo:(c[7]||"").trim(), method:"イオンカード",
+      source:"aeoncard", category:"", taxTag:"", locked:false
+    });
+  }
+  let bill=null;
+  if(billAmt!=null && billAmt>0 && payDate) bill={ card:"イオンカード", month:shiftMonth(payDate.slice(0,7),-1), amount:billAmt };
+  return {txs:out, excluded:0, bill};
+}
+
+function normalizePPCard(rows){ // PayPayカード請求明細
+  const out=[]; const seen={}; let billTotal=0; let payDate=null;
+  const H=rows[0].map(h=>h.trim());
+  const iDate=H.indexOf("利用日/キャンセル日"),
+        iWho=H.findIndex(h=>h.includes("利用店名")),
+        iSiharai=H.indexOf("支払総額"),
+        iTougetsu=H.indexOf("当月支払金額"),
+        iPayDay=H.indexOf("当月お支払日");
+  for(let r=1;r<rows.length;r++){
+    const c=rows[r];
+    const d=normDate(c[iDate]); if(!d) continue;
+    const amount=parseAmt(c[iSiharai]); if(amount==null) continue;
+    if(!payDate && c[iPayDay]){ const pd=normDate(c[iPayDay]); if(pd) payDate=pd.date; }
+    const who=(c[iWho]||"").trim();
+    // キャンセル(マイナス)も金額として扱う
+    const tougetsu=parseAmt(c[iTougetsu]); if(tougetsu!=null) billTotal+=tougetsu;
+    const key=[d.date,who,amount].join("|");
+    seen[key]=(seen[key]||0)+1;
+    out.push({
+      id:"ppcard:"+fnv(key)+"-"+seen[key],
+      date:d.date, time:"", amount, type:"expense",
+      counterparty:who, memo:"", method:"PayPayカード",
+      source:"ppcard", category:"", taxTag:"", locked:false
+    });
+  }
+  // 未払金: 支払日の前月末時点の負債(例:6/29支払→5月末の未払金)
+  let bill=null;
+  if(billTotal>0 && payDate) bill={ card:"PayPay", month:shiftMonth(payDate.slice(0,7),-1), amount:billTotal };
+  return {txs:out, excluded:0, bill};
+}
+
 function normalizeSMBC(rows){
   const out=[]; const bals={};
   const H=rows[0]; const idx=n=>H.indexOf(n);
@@ -775,6 +880,8 @@ async function importFiles(files){
                 : fmt==="smbc"  ?normalizeSMBC(rows)
                 : fmt==="aeon"  ?normalizeAeonCSV(rows)
                 : fmt==="saison"?normalizeSaison(rows)
+                : fmt==="ppcard"?normalizePPCard(rows)
+                : fmt==="aeoncard"?normalizeAeonCard(rows)
                 : fmt==="bank"  ?normalizeBank(rows)
                 : normalizeOlive(rows);
       const {txs,excluded} = res;
@@ -785,8 +892,9 @@ async function importFiles(files){
         await tput("tx",tx);
         existing.add(tx.id);added++;
       }
-      const fname = fmt==="paypay"?"PayPay":fmt==="smbc"?"三井住友銀行"
+      const fname = fmt==="paypay"?"PayPay(取引履歴)":fmt==="smbc"?"三井住友銀行"
                   :fmt==="aeon"?"イオン銀行":fmt==="saison"?"セゾンカード"
+                  :fmt==="ppcard"?"PayPayカード(請求明細)":fmt==="aeoncard"?"イオンカード(請求明細)"
                   :fmt==="bank"?(res.accName||"銀行"):"Olive/三井住友カード";
       logs.push(`✓ ${f.name}(${fname})\n　取込 ${added}件 / 重複スキップ ${dup}件`+
         (excluded?` / ポイント行除外 ${excluded}件`:""));
@@ -1013,7 +1121,7 @@ async function renderList(){
     const cd=CAT[t.category]||{};
     const cls=t.type==="expense"?"exp":t.type==="income"?"inc":"trf";
     const sign=t.type==="expense"?"−":t.type==="income"?"+":"";
-    const src=t.source==="paypay"?"PayPay":t.source==="smbc"?"三井住友":t.source==="olive"?"Olive":t.source==="aeon"?"イオン":t.source==="saison"?"セゾン":t.source==="bank"?"銀行":"手入力";
+    const src=t.source==="paypay"?"PayPay":t.source==="ppcard"?"PayPayカード":t.source==="smbc"?"三井住友":t.source==="olive"?"Olive":t.source==="aeon"?"イオン":t.source==="aeoncard"?"イオンカード":t.source==="saison"?"セゾン":t.source==="bank"?"銀行":"手入力";
     html+=`<div class="txrow" data-id="${esc(t.id)}">
       <span class="cat dot" style="background:${cd.color||"#ccc"}"></span>
       <div class="mid">
@@ -1184,7 +1292,7 @@ async function renderImport(){
   el("view").innerHTML=`
   <div class="card">
     <h2>CSVファイルの取込</h2>
-    <p class="dropmsg" style="margin:4px 0 12px">対応形式:<b>PayPay取引履歴</b> / <b>三井住友銀行 入出金明細</b> / <b>Olive(三井住友カード)利用明細</b> / <b>イオン銀行 入出金明細</b> / <b>セゾンカード 利用明細</b><br>
+    <p class="dropmsg" style="margin:4px 0 12px">対応形式:<b>PayPayカード 請求明細</b> / <b>三井住友銀行 入出金明細</b> / <b>Olive(三井住友カード)利用明細</b> / <b>イオン銀行 入出金明細</b> / <b>イオンカード 利用明細</b> / <b>セゾンカード 利用明細</b><br>
     複数ファイルをまとめて選べます。同じ取引は自動で重複除外されます。</p>
     <input type="file" id="files" accept=".csv,text/csv" multiple style="display:none">
     <button class="btn" id="pick">ファイルを選ぶ</button>
@@ -1197,10 +1305,11 @@ async function renderImport(){
   </div>
   <div class="card">
     <h2>各サービスでのCSVの取り方</h2>
-    <p style="font-size:13px;margin:6px 0"><b>PayPay</b>:アプリ → 取引履歴 → 右上「CSV」→ メールで受取 → ファイルに保存</p>
+    <p style="font-size:13px;margin:6px 0"><b>PayPayカード</b>:PayPayアプリ → カード → ご利用明細 → CSVダウンロード(請求月ごと)。利用日ベースで計上し、請求総額を「カード未払金」に記録します。毎月取り込んでください。</p>
     <p style="font-size:13px;margin:6px 0"><b>三井住友銀行</b>:SMBCダイレクト → 入出金明細 → 「明細をダウンロード」(CSV)</p>
     <p style="font-size:13px;margin:6px 0"><b>Olive(三井住友カード)</b>:Vpass → ご利用明細 → 「CSVで保存」。お支払い月ごとのファイルを毎月取り込んでください</p>
     <p style="font-size:13px;margin:6px 0"><b>イオン銀行</b>:イオン銀行ダイレクト → 入出金明細照会 → 期間指定 → 照会結果画面で「CSV形式」をダウンロード(前年同月以降・直近400件まで)。月末残高も自動記録されます。</p>
+    <p style="font-size:13px;margin:6px 0"><b>イオンカード</b>:暮らしのマネーサイト → ご利用明細 → CSVダウンロード(請求月ごと)。利用日ベースで計上し、請求額を「カード未払金」に記録します。2枚ある場合は各カードの明細を取り込んでください。</p>
     <p style="font-size:13px;margin:6px 0"><b>セゾンカード(三井ショッピングパークカード等)</b>:Netアンサー → ご利用明細 → CSVダウンロード。お支払い月ごとのファイルを毎月取り込んでください。</p>
   </div>
   <div class="card">
@@ -1774,6 +1883,7 @@ el("fab").onclick=openManualAdd;
   await migrate4();
   await migrate5();
   await migrate6();
+  await migrate7();
   renderTab();
   if("serviceWorker" in navigator){
     try{ navigator.serviceWorker.register("./sw.js"); }catch(e){}
