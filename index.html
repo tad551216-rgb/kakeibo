@@ -41,6 +41,10 @@ main{padding:0 14px 24px;max-width:680px;margin:0 auto;}
 .monthnav select.navsel{font-size:19px;font-weight:700;text-align:center;text-align-last:center;
   border:none;background:transparent;color:var(--ink);letter-spacing:.03em;
   -webkit-appearance:none;appearance:none;padding:2px 8px;min-width:150px;}
+.segwrap{display:flex;gap:4px;background:var(--bg);border-radius:10px;padding:4px;margin:0 0 10px;}
+.seg{flex:1;padding:8px 0;border:none;background:transparent;border-radius:7px;font:inherit;font-size:14px;font-weight:600;color:var(--muted);}
+.seg.on{background:var(--surface);color:var(--ink);box-shadow:0 1px 3px rgba(0,0,0,.08);}
+.rangesel{font-size:15px !important;min-width:118px;}
 /* 収支サマリ */
 .balrow{display:flex;gap:10px;}
 .balrow .cell{flex:1;text-align:center;border-radius:10px;padding:4px 0;cursor:pointer;border:1px solid transparent;}
@@ -950,6 +954,16 @@ function sumMonth(txs,month){
   }
   return {inc,exp,byCat};
 }
+function sumRange(txs,fromMonth,toMonth){ // fromMonth〜toMonth(両端含む、"YYYY-MM")
+  let inc=0,exp=0;const byCat={};const incByCat={};
+  for(const t of txs){
+    const mm=monthOf(t.date);
+    if(mm<fromMonth||mm>toMonth) continue;
+    if(t.type==="income"){inc+=t.amount;incByCat[t.category]=(incByCat[t.category]||0)+t.amount;}
+    else if(t.type==="expense"){exp+=t.amount;byCat[t.category]=(byCat[t.category]||0)+t.amount;}
+  }
+  return {inc,exp,byCat,incByCat};
+}
 function medicalYTD(txs,year){
   let s=0;
   for(const t of txs) if(t.taxTag==="医療費" && t.type==="expense" && t.date.startsWith(year)) s+=t.amount;
@@ -1004,7 +1018,7 @@ function drawBars(canvas, labels, incs, exps){
 }
 
 /* ---------- 画面状態 ---------- */
-const S = { tab:"home", month:"", homeMode:"expense", filterCat:"", filterMonth:"", assetMonth:"", taxYear:0 };
+const S = { tab:"home", month:"", homeMode:"expense", homePeriod:"month", periodYear:"", rangeFrom:"", rangeTo:"", filterCat:"", filterMonth:"", assetMonth:"", taxYear:0 };
 
 function latestMonth(txs){
   if(!txs.length){const d=new Date();return d.toISOString().slice(0,7);}
@@ -1034,36 +1048,75 @@ function yearOptions(current, availYears){
 async function renderHome(){
   const txs=await allTx();
   if(!S.month) S.month=latestMonth(txs);
-  const {inc,exp,byCat}=sumMonth(txs,S.month);
-  const bal=inc-exp;
-  const items=Object.entries(byCat).sort((a,b)=>b[1]-a[1])
-    .map(([k,v])=>({k,v,color:(CAT[k]||{}).color||"#9AA0A6"}));
-  // 収入カテゴリ別
-  const incByCat={};
-  for(const t of txs){ if(monthOf(t.date)!==S.month) continue;
-    if(t.type==="income") incByCat[t.category]=(incByCat[t.category]||0)+t.amount; }
-  const incItems=Object.entries(incByCat).sort((a,b)=>b[1]-a[1])
-    .map(([k,v])=>({k,v,color:(CAT[k]||{}).color||"#9AA0A6"}));
-  const mode=S.homeMode||"expense"; // expense | income
+  const allMs=[...new Set(txs.map(t=>monthOf(t.date)))].sort();
+  const allYs=[...new Set(txs.map(t=>t.date.slice(0,4)))].sort();
+  const period=S.homePeriod||"month";
+  if(!S.periodYear) S.periodYear=(S.month||latestMonth(txs)||"").slice(0,4);
+  if(!S.rangeFrom) S.rangeFrom=allMs[0]||S.month;
+  if(!S.rangeTo) S.rangeTo=S.month;
+
+  // 集計範囲(from〜to)を決定
+  let from,to,rangeLabel,trendMonths;
+  if(period==="year"){
+    from=S.periodYear+"-01"; to=S.periodYear+"-12";
+    rangeLabel=S.periodYear+"年";
+    trendMonths=[];for(let i=1;i<=12;i++)trendMonths.push(S.periodYear+"-"+String(i).padStart(2,"0"));
+  }else if(period==="range"){
+    from=S.rangeFrom; to=S.rangeTo;
+    if(from>to){const t=from;from=to;to=t;}
+    rangeLabel=monthLabel(from)+" 〜 "+monthLabel(to);
+    trendMonths=[];let mm=from;while(mm<=to&&trendMonths.length<60){trendMonths.push(mm);mm=shiftMonth(mm,1);}
+  }else{ // month
+    from=S.month; to=S.month;
+    rangeLabel=monthLabel(S.month);
+    trendMonths=[];for(let i=5;i>=0;i--)trendMonths.push(shiftMonth(S.month,-i));
+  }
+
+  const agg=sumRange(txs,from,to);
+  const inc=agg.inc, exp=agg.exp, bal=inc-exp;
+  const items=Object.entries(agg.byCat).sort((a,b)=>b[1]-a[1]).map(([k,v])=>({k,v,color:(CAT[k]||{}).color||"#9AA0A6"}));
+  const incItems=Object.entries(agg.incByCat).sort((a,b)=>b[1]-a[1]).map(([k,v])=>({k,v,color:(CAT[k]||{}).color||"#9AA0A6"}));
+  const mode=S.homeMode||"expense";
   const dispItems = mode==="income"?incItems:items;
   const dispTotal = mode==="income"?inc:exp;
-  // 6ヶ月推移
-  const months=[];for(let i=5;i>=0;i--)months.push(shiftMonth(S.month,-i));
-  const incs=months.map(m=>sumMonth(txs,m).inc), exps=months.map(m=>sumMonth(txs,m).exp);
-  const year=S.month.slice(0,4);
+  const incs=trendMonths.map(m=>sumMonth(txs,m).inc), exps=trendMonths.map(m=>sumMonth(txs,m).exp);
+  const year=(period==="year"?S.periodYear:S.month.slice(0,4));
   const med=medicalYTD(txs,year);
   const medPct=Math.min(100,med/100000*100);
+  const balLabel = period==="month"?"今月の収支":"期間の収支";
+  const trendLabel = period==="year"?`月別の推移(${S.periodYear}年)`:period==="range"?`月別の推移(${trendMonths.length}ヶ月)`:"収入と支出の推移(6ヶ月)";
+
+  // 期間セレクタUI
+  const segBtn=(val,label)=>`<button class="seg ${period===val?'on':''}" data-period="${val}">${label}</button>`;
+  let navHtml;
+  if(period==="year"){
+    navHtml=`<div class="monthnav">
+      <button id="yPrev" aria-label="前の年">‹</button>
+      <select class="navsel" id="yLabel">${yearOptions(Number(S.periodYear),allYs.map(Number))}</select>
+      <button id="yNext" aria-label="次の年">›</button>
+    </div>`;
+  }else if(period==="range"){
+    navHtml=`<div style="display:flex;align-items:center;gap:6px;justify-content:center;margin:4px 0 2px">
+      <select class="navsel rangesel" id="rFrom" style="min-width:118px">${monthOptions(S.rangeFrom,allMs)}</select>
+      <span style="color:var(--muted)">〜</span>
+      <select class="navsel rangesel" id="rTo" style="min-width:118px">${monthOptions(S.rangeTo,allMs)}</select>
+    </div>`;
+  }else{
+    navHtml=`<div class="monthnav">
+      <button id="mPrev" aria-label="前の月">‹</button>
+      <select class="navsel" id="mLabel">${monthOptions(S.month,allMs)}</select>
+      <button id="mNext" aria-label="次の月">›</button>
+    </div>`;
+  }
 
   el("view").innerHTML = `
-  <div class="monthnav">
-    <button id="mPrev" aria-label="前の月">‹</button>
-    <select class="navsel" id="mLabel">${monthOptions(S.month,[...new Set(txs.map(t=>monthOf(t.date)))])}</select>
-    <button id="mNext" aria-label="次の月">›</button>
-  </div>
+  <div class="segwrap">${segBtn("month","月")}${segBtn("year","年")}${segBtn("range","期間")}</div>
+  ${navHtml}
   <div class="card">
     <div class="bigbal">
-      <div class="t">今月の収支</div>
+      <div class="t">${balLabel}</div>
       <div class="v num" style="color:${bal>=0?'var(--income)':'var(--expense)'}">${bal>=0?"+":""}${yen(bal)}</div>
+      ${period!=="month"?`<div class="note" style="text-align:center">${rangeLabel}</div>`:""}
     </div>
     <div class="balrow">
       <div class="cell ${mode==="income"?"selcell":""}" id="cellInc"><div class="t">収入</div><div class="v inc num">${yen(inc)}</div></div>
@@ -1076,10 +1129,10 @@ async function renderHome(){
     <div class="legend">${dispItems.map(i=>`
       <div class="li"><div class="nm"><span class="dot" style="background:${i.color}"></span><span class="txt">${esc(i.k)}</span></div>
       <div class="amt num">${yen(i.v)}</div></div>`).join("")}</div>`
-    : `<div class="empty">${txs.length?`この月の${mode==="income"?"収入":"支出"}はありません`:`まだデータがありません。<br>「取込」タブからCSVを読み込んでください。`}</div>`}
+    : `<div class="empty">${txs.length?`この期間の${mode==="income"?"収入":"支出"}はありません`:`まだデータがありません。<br>「取込」タブからCSVを読み込んでください。`}</div>`}
   </div>
   <div class="card">
-    <h2>収入と支出の推移(6ヶ月)</h2>
+    <h2>${trendLabel}</h2>
     <canvas id="bars"></canvas>
   </div>
   <div class="card">
@@ -1092,13 +1145,25 @@ async function renderHome(){
     <div class="progmeta"><span>0</span><span>10万円</span></div>
     <div class="note">「医療・薬」カテゴリ等で税タグ「医療費」が付いた取引の合計です。明細から個別に付け外しできます。</div>
   </div>`;
-  el("mPrev").onclick=()=>{S.month=shiftMonth(S.month,-1);renderHome();};
-  el("mNext").onclick=()=>{S.month=shiftMonth(S.month,1);renderHome();};
-  el("mLabel").onchange=e=>{S.month=e.target.value;renderHome();};
+  document.querySelectorAll("[data-period]").forEach(b=>b.onclick=()=>{S.homePeriod=b.dataset.period;renderHome();});
+  if(el("mPrev")){
+    el("mPrev").onclick=()=>{S.month=shiftMonth(S.month,-1);renderHome();};
+    el("mNext").onclick=()=>{S.month=shiftMonth(S.month,1);renderHome();};
+    el("mLabel").onchange=e=>{S.month=e.target.value;renderHome();};
+  }
+  if(el("yPrev")){
+    el("yPrev").onclick=()=>{S.periodYear=String(Number(S.periodYear)-1);renderHome();};
+    el("yNext").onclick=()=>{S.periodYear=String(Number(S.periodYear)+1);renderHome();};
+    el("yLabel").onchange=e=>{S.periodYear=e.target.value;renderHome();};
+  }
+  if(el("rFrom")){
+    el("rFrom").onchange=e=>{S.rangeFrom=e.target.value;renderHome();};
+    el("rTo").onchange=e=>{S.rangeTo=e.target.value;renderHome();};
+  }
   el("cellInc").onclick=()=>{S.homeMode="income";renderHome();};
   el("cellExp").onclick=()=>{S.homeMode="expense";renderHome();};
   if(txs.length&&dispItems.length) drawDonut(el("donut"),dispItems,mode==="income"?"収入合計":"支出合計",yen(dispTotal));
-  drawBars(el("bars"),months.map(m=>Number(m.slice(5))+"月"),incs,exps);
+  drawBars(el("bars"),trendMonths.map(m=>Number(m.slice(5))+"月"),incs,exps);
 }
 
 /* ---------- 明細 ---------- */
