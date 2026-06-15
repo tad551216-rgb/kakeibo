@@ -95,6 +95,13 @@ canvas{display:block;width:100%;}
 .daterule{font-size:12px;color:var(--muted);background:var(--bg);padding:3px 10px;border-radius:8px;
   margin:10px 0 2px;display:inline-block;}
 .filterbar{display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap;}
+.catchips{margin:8px 0 10px;}
+.catchips-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;}
+.catchips-label{font-size:12px;font-weight:700;color:var(--muted);}
+.catclear{font-size:12px;font-weight:600;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:14px;padding:3px 12px;}
+.chiprow{display:flex;flex-wrap:wrap;gap:6px;}
+.catchip{font-size:12.5px;font-weight:600;color:var(--ink);background:var(--surface);border:1px solid var(--line);border-radius:15px;padding:6px 12px;line-height:1;}
+.catchip.on{box-shadow:0 1px 3px rgba(0,0,0,.12);}
 select,input[type=text],input[type=date],input[type=number]{
   font:inherit;padding:9px 10px;border:1px solid var(--line);border-radius:10px;background:var(--surface);
   color:var(--ink);min-width:0;}
@@ -1103,7 +1110,7 @@ function drawBars(canvas, labels, incs, exps){
 }
 
 /* ---------- 画面状態 ---------- */
-const S = { tab:"home", month:"", homeMode:"expense", homePeriod:"month", periodYear:"", rangeFrom:"", rangeTo:"", listPeriod:"month", listMonth:"", listYear:"", listFrom:"", listTo:"", filterCat:"", filterMonth:"", assetMonth:"", taxYear:0, docOpenType:"" };
+const S = { tab:"home", month:"", homeMode:"expense", homePeriod:"month", periodYear:"", rangeFrom:"", rangeTo:"", listPeriod:"month", listMonth:"", listYear:"", listFrom:"", listTo:"", filterCats:[], filterMonth:"", assetMonth:"", taxYear:0, docOpenType:"" };
 
 function latestMonth(txs){
   if(!txs.length){const d=new Date();return d.toISOString().slice(0,7);}
@@ -1271,7 +1278,7 @@ async function renderList(){
 
   const list = txs.filter(t=>{
     const mm=monthOf(t.date);
-    return mm>=from && mm<=to && (!S.filterCat||t.category===S.filterCat);
+    return mm>=from && mm<=to && (!S.filterCats.length||S.filterCats.includes(t.category));
   }).sort((a,b)=>b.date.localeCompare(a.date));
 
   // 合計計算
@@ -1304,8 +1311,15 @@ async function renderList(){
 
   let html=`<div class="segwrap">${segBtn("month","月")}${segBtn("year","年")}${segBtn("range","期間")}</div>
   ${navHtml}
-  <div class="filterbar" style="margin-top:8px">
-    <select id="fC"><option value="">全カテゴリ</option>${cats.map(c=>`<option ${c===S.filterCat?"selected":""}>${esc(c)}</option>`).join("")}</select>
+  <div class="catchips">
+    <div class="catchips-head">
+      <span class="catchips-label">カテゴリで絞り込み${S.filterCats.length?`(${S.filterCats.length})`:""}</span>
+      ${S.filterCats.length?`<button class="catclear" id="catClear">クリア</button>`:""}
+    </div>
+    <div class="chiprow">
+      ${cats.map(c=>{const on=S.filterCats.includes(c);const col=(CAT[c]||{}).color||"#9AA0A6";
+        return `<button class="catchip ${on?'on':''}" data-cat="${esc(c)}" style="${on?`background:${col};border-color:${col};color:#fff`:''}">${esc(c)}</button>`;}).join("")}
+    </div>
   </div>
   <div class="card sumcard">
     <div class="sumrow">
@@ -1313,7 +1327,7 @@ async function renderList(){
       <div class="sumcell"><div class="t">支出</div><div class="v exp num">${yen(exp)}</div></div>
       <div class="sumcell"><div class="t">差引</div><div class="v num" style="color:${bal>=0?'var(--income)':'var(--expense)'}">${bal>=0?"+":""}${yen(bal)}</div></div>
     </div>
-    <div class="note" style="text-align:center;margin-top:4px">${rangeLabel}${S.filterCat?` ・ ${esc(S.filterCat)}`:""} ・ ${list.length}件</div>
+    <div class="note" style="text-align:center;margin-top:4px">${rangeLabel}${S.filterCats.length?` ・ ${S.filterCats.length===1?esc(S.filterCats[0]):"カテゴリ"+S.filterCats.length+"件"}`:""} ・ ${list.length}件</div>
   </div>
   <div class="card" style="padding:4px 14px">`;
   if(!list.length) html+=`<div class="empty">該当する明細がありません</div>`;
@@ -1350,7 +1364,13 @@ async function renderList(){
     el("lFrom").onchange=e=>{S.listFrom=e.target.value;renderList();};
     el("lTo").onchange=e=>{S.listTo=e.target.value;renderList();};
   }
-  el("fC").onchange=e=>{S.filterCat=e.target.value;renderList();};
+  el("view").querySelectorAll(".catchip").forEach(b=>b.onclick=()=>{
+    const c=b.dataset.cat;
+    const i=S.filterCats.indexOf(c);
+    if(i>=0) S.filterCats.splice(i,1); else S.filterCats.push(c);
+    renderList();
+  });
+  if(el("catClear")) el("catClear").onclick=()=>{S.filterCats=[];renderList();};
   document.querySelectorAll(".txrow").forEach(r=>r.onclick=()=>openEdit(r.dataset.id));
 }
 
