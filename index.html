@@ -979,6 +979,71 @@ function medicalYTD(txs,year){
   return s;
 }
 
+// 区分の判定(薬局・ドラッグストアは医薬品購入、それ以外は診療・治療)
+function iryouhiKubun(name){
+  const h=norm(name);
+  if(/薬局|ﾄﾞﾗｯｸ|ドラッグ|ファイン|ｺｺｶﾗ|ココカラ|ﾏﾂﾓﾄ|マツモト|ｳｴﾙｼｱ|ウエルシア|ｽｷﾞ薬|スギ薬|薬品|ﾔｯｷﾖｸ/.test(h)) return "医薬品購入";
+  if(/介護|ｶｲｺﾞ/.test(h)) return "介護保険サービス";
+  return "診療・治療";
+}
+
+async function loadScriptOnce(src,globalName){
+  if(window[globalName]) return;
+  await new Promise((res,rej)=>{
+    const s=document.createElement("script");
+    s.src=src; s.onload=res; s.onerror=()=>rej(new Error(src+" の読み込みに失敗"));
+    document.head.appendChild(s);
+  });
+}
+
+async function exportIryouhi(year,txs){
+  const note=el("iryouhiNote"), btn=el("iryouhiExport");
+  const meds=txs.filter(t=>t.taxTag==="医療費"&&t.type==="expense"&&t.date.startsWith(String(year)))
+    .sort((a,b)=>a.date.localeCompare(b.date));
+  if(!meds.length){ if(note)note.textContent="この年に税タグ「医療費」の取引がありません。明細から医療費に税タグを付けてください。"; return; }
+  try{
+    if(btn){btn.disabled=true;btn.textContent="出力の準備中…";}
+    // SheetJSとテンプレートを遅延読み込み(同じフォルダに配置)
+    await loadScriptOnce("xlsx.mini.min.js","XLSX");
+    await loadScriptOnce("template_iryouhi.b64.js","IRYOUHI_TEMPLATE_B64");
+    const XLSX=window.XLSX;
+    const b64=window.IRYOUHI_TEMPLATE_B64;
+    // Base64→バイナリ
+    const bin=atob(b64); const buf=new Uint8Array(bin.length);
+    for(let i=0;i<bin.length;i++) buf[i]=bin.charCodeAt(i);
+    const wb=XLSX.read(buf,{type:"array"});
+    const ws=wb.Sheets["医療費集計フォーム"];
+    const KCOL={"診療・治療":"D","医薬品購入":"E","介護保険サービス":"F","その他の医療費":"G"};
+    const setC=(addr,v,t)=>{ ws[addr]={t:t||(typeof v==="number"?"n":"s"),v}; };
+    let row=9;
+    for(const t of meds){
+      setC("B"+row,"本人");
+      setC("C"+row,(t.counterparty||"").slice(0,20));
+      setC(KCOL[iryouhiKubun(t.counterparty)]+row,"該当する");
+      setC("H"+row,t.amount,"n");
+      setC("J"+row,t.date.replace(/-/g,"/"));
+      row++;
+    }
+    // 書き込んだ範囲に合わせてシート範囲を拡張
+    const ref=ws["!ref"]||"A1:M1004";
+    const range=XLSX.utils.decode_range(ref);
+    if(range.e.r<row-1) range.e.r=row-1;
+    ws["!ref"]=XLSX.utils.encode_range(range);
+    const out=XLSX.write(wb,{bookType:"xlsx",type:"array"});
+    const blob=new Blob([out],{type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement("a");
+    a.href=url; a.download=`医療費集計フォーム_${year}.xlsx`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url),60000);
+    if(note)note.textContent=`${meds.length}件を書き出しました(合計 ${yen(meds.reduce((s,t)=>s+t.amount,0))})。ダウンロードを確認してください。`;
+  }catch(err){
+    if(note)note.textContent="出力に失敗しました: "+(err.message||err);
+  }finally{
+    if(btn){btn.disabled=false;btn.textContent=`${year}年分の医療費集計フォーム(Excel)を出力`;}
+  }
+}
+
 /* ---------- 描画:ドーナツ&棒グラフ(依存ライブラリなし) ---------- */
 function drawDonut(canvas, items, centerLabel, centerValue){
   const dpr=window.devicePixelRatio||1;
@@ -1931,7 +1996,9 @@ async function renderTax(){
     </div>
     <div class="frow" style="margin-top:12px"><label>医療費 — 家計簿から自動集計: <b>${yen(agg.med)}</b></label>
       <input type="number" class="txin" id="t_medOv" value="${v.medOv}" placeholder="金額を上書きする場合のみ入力">
-      <input type="number" class="txin" id="t_medHoten" value="${v.medHoten}" placeholder="保険金などで補填される金額" style="margin-top:6px"></div>
+      <input type="number" class="txin" id="t_medHoten" value="${v.medHoten}" placeholder="保険金などで補填される金額" style="margin-top:6px">
+      <button class="btn sub" id="iryouhiExport" style="margin-top:8px">${y}年分の医療費集計フォーム(Excel)を出力</button>
+      <div class="note" id="iryouhiNote" style="margin-top:4px">税タグ「医療費」が付いた取引を、国税庁の公式フォームに書き出します。</div></div>
     <div class="frow"><label>ふるさと納税・寄附金 — 自動集計: <b>${yen(agg.don)}</b></label>
       <input type="number" class="txin" id="t_donOv" value="${v.donOv}" placeholder="金額を上書きする場合のみ入力"></div>
     <div class="frow"><label>配偶者控除・配偶者特別控除</label>
@@ -2011,6 +2078,7 @@ async function renderTax(){
   el("tPrev").onclick=()=>{S.taxYear=y-1;renderTax();};
   el("tNext").onclick=()=>{S.taxYear=y+1;renderTax();};
   el("tLabel").onchange=e=>{S.taxYear=Number(e.target.value);renderTax();};
+  if(el("iryouhiExport")) el("iryouhiExport").onclick=()=>exportIryouhi(y,txs);
   // 書類保管
   const DOC_TYPES=["年金通知書","源泉徴収票","住民税","生命保険控除証明","地震保険控除証明","国民健康保険・年金","医療費","ふるさと納税・寄附","その他"];
   async function drawDocs(){

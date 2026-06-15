@@ -1,5 +1,5 @@
-const CACHE = "kakeibo-v29";
-const ASSETS = ["./", "./index.html", "./manifest.json", "./icon-180.png", "./icon-512.png"];
+const CACHE = "kakeibo-v30";
+const ASSETS = ["./", "./index.html", "./manifest.json", "./icon-180.png", "./icon-512.png", "./xlsx.mini.min.js", "./template_iryouhi.b64.js"];
 
 self.addEventListener("install", e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)).then(() => self.skipWaiting()));
