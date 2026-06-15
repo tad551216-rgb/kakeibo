@@ -102,6 +102,11 @@ canvas{display:block;width:100%;}
 .chiprow{display:flex;flex-wrap:wrap;gap:6px;}
 .catchip{font-size:12.5px;font-weight:600;color:var(--ink);background:var(--surface);border:1px solid var(--line);border-radius:15px;padding:6px 12px;line-height:1;}
 .catchip.on{box-shadow:0 1px 3px rgba(0,0,0,.12);}
+.catfilter{display:flex;align-items:center;gap:8px;margin:8px 0 8px;}
+.catopen{flex:1;display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border:1px solid var(--line);border-radius:10px;background:var(--surface);font:inherit;font-size:14px;font-weight:600;color:var(--ink);}
+.catopen-chev{color:var(--muted);font-size:12px;}
+.catsec-title{font-size:12px;font-weight:700;color:var(--muted);margin:12px 0 6px;}
+.catsec-title:first-child{margin-top:0;}
 select,input[type=text],input[type=date],input[type=number]{
   font:inherit;padding:9px 10px;border:1px solid var(--line);border-radius:10px;background:var(--surface);
   color:var(--ink);min-width:0;}
@@ -1311,16 +1316,17 @@ async function renderList(){
 
   let html=`<div class="segwrap">${segBtn("month","月")}${segBtn("year","年")}${segBtn("range","期間")}</div>
   ${navHtml}
-  <div class="catchips">
-    <div class="catchips-head">
-      <span class="catchips-label">カテゴリで絞り込み${S.filterCats.length?`(${S.filterCats.length})`:""}</span>
-      ${S.filterCats.length?`<button class="catclear" id="catClear">クリア</button>`:""}
-    </div>
-    <div class="chiprow">
-      ${cats.map(c=>{const on=S.filterCats.includes(c);const col=(CAT[c]||{}).color||"#9AA0A6";
-        return `<button class="catchip ${on?'on':''}" data-cat="${esc(c)}" style="${on?`background:${col};border-color:${col};color:#fff`:''}">${esc(c)}</button>`;}).join("")}
-    </div>
+  <div class="catfilter">
+    <button class="catopen" id="catOpen">
+      <span>カテゴリで絞り込み${S.filterCats.length?`(${S.filterCats.length})`:""}</span>
+      <span class="catopen-chev">▸</span>
+    </button>
+    ${S.filterCats.length?`<button class="catclear" id="catClear">クリア</button>`:""}
   </div>
+  ${S.filterCats.length?`<div class="chiprow" style="margin:0 0 10px">
+    ${S.filterCats.map(c=>{const col=(CAT[c]||{}).color||"#9AA0A6";
+      return `<span class="catchip on" style="background:${col};border-color:${col};color:#fff">${esc(c)}</span>`;}).join("")}
+  </div>`:""}
   <div class="card sumcard">
     <div class="sumrow">
       <div class="sumcell"><div class="t">収入</div><div class="v inc num">${yen(inc)}</div></div>
@@ -1364,12 +1370,7 @@ async function renderList(){
     el("lFrom").onchange=e=>{S.listFrom=e.target.value;renderList();};
     el("lTo").onchange=e=>{S.listTo=e.target.value;renderList();};
   }
-  el("view").querySelectorAll(".catchip").forEach(b=>b.onclick=()=>{
-    const c=b.dataset.cat;
-    const i=S.filterCats.indexOf(c);
-    if(i>=0) S.filterCats.splice(i,1); else S.filterCats.push(c);
-    renderList();
-  });
+  if(el("catOpen")) el("catOpen").onclick=()=>openCatPicker(cats,()=>renderList());
   if(el("catClear")) el("catClear").onclick=()=>{S.filterCats=[];renderList();};
   document.querySelectorAll(".txrow").forEach(r=>r.onclick=()=>openEdit(r.dataset.id));
 }
@@ -2166,6 +2167,37 @@ async function renderTax(){
 
 /* ---------- モーダル・タブ ---------- */
 const el=id=>document.getElementById(id);
+function openCatPicker(cats, onChange){
+  const grp={expense:[],income:[],transfer:[]};
+  for(const c of cats){ const t=(CAT[c]||{}).type||"expense"; (grp[t]||grp.expense).push(c); }
+  const section=(title,list)=> list.length?`
+    <div class="catsec-title">${title}</div>
+    <div class="chiprow">
+      ${list.map(c=>{const on=S.filterCats.includes(c);const col=(CAT[c]||{}).color||"#9AA0A6";
+        return `<button class="catchip ${on?'on':''}" data-cat="${esc(c)}" style="${on?`background:${col};border-color:${col};color:#fff`:''}">${esc(c)}</button>`;}).join("")}
+    </div>`:"";
+  const body=()=>`
+    <div style="display:flex;align-items:center;margin-bottom:10px">
+      <span style="flex:1;font-size:16px;font-weight:700">カテゴリで絞り込み${S.filterCats.length?`(${S.filterCats.length})`:""}</span>
+      ${S.filterCats.length?`<button class="catclear" id="pkClear" style="margin-right:8px">クリア</button>`:""}
+      <button class="catclear" id="pkClose">閉じる</button>
+    </div>
+    ${section("支出",grp.expense)}
+    ${section("収入",grp.income)}
+    ${grp.transfer.length?section("その他",grp.transfer):""}`;
+  showModal(body());
+  const rebind=()=>{
+    el("modalRoot").querySelectorAll(".catchip").forEach(b=>b.onclick=()=>{
+      const c=b.dataset.cat; const i=S.filterCats.indexOf(c);
+      if(i>=0) S.filterCats.splice(i,1); else S.filterCats.push(c);
+      el("modalRoot").querySelector(".modal").innerHTML=body(); rebind(); onChange();
+    });
+    if(el("pkClear")) el("pkClear").onclick=()=>{S.filterCats=[];el("modalRoot").querySelector(".modal").innerHTML=body();rebind();onChange();};
+    if(el("pkClose")) el("pkClose").onclick=closeModal;
+  };
+  rebind();
+}
+
 function showModal(html){
   el("modalRoot").innerHTML=`<div class="modalbg" id="mbg"><div class="modal">${html}</div></div>`;
   el("mbg").onclick=e=>{if(e.target.id==="mbg")closeModal();};
