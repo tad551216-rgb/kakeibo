@@ -54,6 +54,13 @@ main{padding:0 14px 24px;max-width:680px;margin:0 auto;}
 .docitem:last-child{border-bottom:none;}
 .docname{font-size:13px;line-height:1.45;word-break:break-all;margin-bottom:6px;}
 .docbtns{display:flex;gap:8px;}
+.doctype{margin-bottom:8px;}
+.doctypebtn{width:100%;display:flex;align-items:center;gap:8px;padding:11px 12px;border:1px solid var(--line);border-radius:10px;background:var(--surface);font:inherit;text-align:left;}
+.doctypebtn.open{border-color:var(--ink);background:var(--bg);}
+.doctypebtn .chev{color:var(--muted);font-size:12px;width:14px;}
+.doctypebtn .tname{flex:1;font-size:14px;font-weight:700;color:var(--ink);}
+.doctypebtn .tcount{font-size:12px;color:var(--muted);}
+.doctypelist{padding:2px 12px 4px;}
 /* 収支サマリ */
 .balrow{display:flex;gap:10px;}
 .balrow .cell{flex:1;text-align:center;border-radius:10px;padding:4px 0;cursor:pointer;border:1px solid transparent;}
@@ -1096,7 +1103,7 @@ function drawBars(canvas, labels, incs, exps){
 }
 
 /* ---------- 画面状態 ---------- */
-const S = { tab:"home", month:"", homeMode:"expense", homePeriod:"month", periodYear:"", rangeFrom:"", rangeTo:"", listPeriod:"month", listMonth:"", listYear:"", listFrom:"", listTo:"", filterCat:"", filterMonth:"", assetMonth:"", taxYear:0 };
+const S = { tab:"home", month:"", homeMode:"expense", homePeriod:"month", periodYear:"", rangeFrom:"", rangeTo:"", listPeriod:"month", listMonth:"", listYear:"", listFrom:"", listTo:"", filterCat:"", filterMonth:"", assetMonth:"", taxYear:0, docOpenType:"" };
 
 function latestMonth(txs){
   if(!txs.length){const d=new Date();return d.toISOString().slice(0,7);}
@@ -2090,17 +2097,26 @@ async function renderTax(){
     if(!all.length){ el("docList").innerHTML=`<p class="note" style="margin:0 0 10px">まだ書類はありません。</p>`; return; }
     // 種類別にグループ化
     const byType={}; for(const d of all){ (byType[d.type]=byType[d.type]||[]).push(d); }
-    el("docList").innerHTML=Object.entries(byType).map(([type,list])=>`
-      <div style="margin-bottom:10px">
-        <div style="font-size:12px;font-weight:700;color:var(--muted);margin-bottom:4px">${esc(type)}</div>
-        ${list.map(d=>`<div class="docitem">
+    el("docList").innerHTML=Object.entries(byType).map(([type,list])=>{
+      const open=S.docOpenType===type;
+      return `<div class="doctype">
+        <button class="doctypebtn ${open?'open':''}" data-type="${esc(type)}">
+          <span class="chev">${open?'▾':'▸'}</span>
+          <span class="tname">${esc(type)}</span>
+          <span class="tcount">${list.length}件</span>
+        </button>
+        ${open?`<div class="doctypelist">${list.map(d=>`<div class="docitem">
           <div class="docname">${esc(d.name)}</div>
           <div class="docbtns">
             <button class="btn sub small docView" data-did="${d.did}" style="padding:4px 14px;font-size:12px;width:auto">開く</button>
             <button class="btn sub small docDel" data-did="${d.did}" style="padding:4px 14px;font-size:12px;width:auto;color:var(--expense)">削除</button>
           </div>
-        </div>`).join("")}
-      </div>`).join("");
+        </div>`).join("")}</div>`:""}
+      </div>`;}).join("");
+    el("docList").querySelectorAll(".doctypebtn").forEach(b=>b.onclick=()=>{
+      S.docOpenType = S.docOpenType===b.dataset.type ? "" : b.dataset.type;
+      drawDocs();
+    });
     el("docList").querySelectorAll(".docView").forEach(b=>b.onclick=async()=>{
       const d=await tget("docs",Number(b.dataset.did)); if(!d)return;
       const blob=d.blob instanceof Blob ? d.blob : new Blob([d.blob],{type:d.mime||"application/pdf"});
