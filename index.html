@@ -15,65 +15,75 @@
   --expense:#BF4E3C; --income:#2E7D5B; --muted:#8A8F98; --transfer:#9AA0A6;
   --accent:#1B2A4A;
   --radius:14px;
+  --basefs:16px;
 }
+/* 文字サイズ(老眼対策): 標準16 / 大19.5 / 特大24 */
+body.fs-large{--basefs:19.5px;}
+body.fs-xlarge{--basefs:24px;}
 *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
 html,body{margin:0;padding:0;background:var(--bg);color:var(--ink);
   font-family:-apple-system,"Hiragino Sans","Hiragino Kaku Gothic ProN","Noto Sans JP",sans-serif;
-  font-size:16px; line-height:1.55;}
+  font-size:var(--basefs,16px); line-height:1.6;}
 body{padding-bottom:calc(64px + env(safe-area-inset-bottom));}
 .num{font-variant-numeric:tabular-nums; font-feature-settings:"tnum";}
 header.app{position:sticky;top:0;z-index:10;background:var(--bg);
   padding:calc(10px + env(safe-area-inset-top)) 16px 8px;
   display:flex;align-items:baseline;justify-content:space-between;}
-header.app h1{font-size:17px;margin:0;font-weight:700;letter-spacing:.04em;}
-header.app .sub{font-size:12px;color:var(--muted);}
+header.app h1{font-size:1.0625rem;margin:0;font-weight:700;letter-spacing:.04em;}
+header.app .sub{font-size:0.75rem;color:var(--muted);}
 main{padding:0 14px 24px;max-width:680px;margin:0 auto;}
 .card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);
   padding:14px 16px;margin-bottom:12px;}
-.card h2{font-size:13px;color:var(--muted);font-weight:600;margin:0 0 8px;letter-spacing:.06em;}
+.card h2{font-size:0.8125rem;color:var(--muted);font-weight:600;margin:0 0 8px;letter-spacing:.06em;}
 /* 月ナビ */
 .monthnav{display:flex;align-items:center;justify-content:center;gap:18px;margin:6px 0 12px;}
 .monthnav button{border:1px solid var(--line);background:var(--surface);border-radius:10px;
-  width:38px;height:38px;font-size:18px;color:var(--ink);}
-.monthnav .label{font-size:19px;font-weight:700;min-width:140px;text-align:center;letter-spacing:.03em;}
+  width:38px;height:38px;font-size:1.125rem;color:var(--ink);}
+.monthnav .label{font-size:1.1875rem;font-weight:700;min-width:140px;text-align:center;letter-spacing:.03em;}
 .monthnav .label.tappable{cursor:pointer;border-radius:8px;padding:2px 10px;}
 .monthnav .label.tappable:active{background:var(--surface);}
-.monthnav select.navsel{font-size:19px;font-weight:700;text-align:center;text-align-last:center;
+.monthnav select.navsel{font-size:1.1875rem;font-weight:700;text-align:center;text-align-last:center;
   border:none;background:transparent;color:var(--ink);letter-spacing:.03em;
   -webkit-appearance:none;appearance:none;padding:2px 8px;min-width:150px;}
 .segwrap{display:flex;gap:4px;background:var(--bg);border-radius:10px;padding:4px;margin:0 0 10px;}
-.seg{flex:1;padding:8px 0;border:none;background:transparent;border-radius:7px;font:inherit;font-size:14px;font-weight:600;color:var(--muted);}
+.seg{flex:1;padding:8px 0;border:none;background:transparent;border-radius:7px;font:inherit;font-size:0.875rem;font-weight:600;color:var(--muted);}
 .seg.on{background:var(--surface);color:var(--ink);box-shadow:0 1px 3px rgba(0,0,0,.08);}
-.rangesel{font-size:15px !important;min-width:118px;}
+.rangesel{font-size:0.9375rem !important;min-width:118px;}
+.fssel{display:flex;gap:8px;margin:10px 0;}
+.fsbtn{flex:1;padding:14px 0;border:2px solid var(--line);border-radius:12px;background:var(--surface);font:inherit;font-weight:700;color:var(--ink);}
+.fsbtn:nth-child(1){font-size:0.9rem;}
+.fsbtn:nth-child(2){font-size:1.15rem;}
+.fsbtn:nth-child(3){font-size:1.4rem;}
+.fsbtn.on{background:var(--ink);color:#fff;border-color:var(--ink);}
 .sumcard{padding:14px}
 .sumrow{display:flex;gap:8px}
 .sumcell{flex:1;text-align:center}
-.sumcell .t{font-size:12px;color:var(--muted);margin-bottom:2px}
-.sumcell .v{font-size:17px;font-weight:700;font-variant-numeric:tabular-nums}
+.sumcell .t{font-size:0.75rem;color:var(--muted);margin-bottom:2px}
+.sumcell .v{font-size:1.0625rem;font-weight:700;font-variant-numeric:tabular-nums}
 .docitem{padding:8px 0;border-bottom:1px solid var(--line);}
 .docitem:last-child{border-bottom:none;}
-.docname{font-size:13px;line-height:1.45;word-break:break-all;margin-bottom:6px;}
+.docname{font-size:0.8125rem;line-height:1.45;word-break:break-all;margin-bottom:6px;}
 .docbtns{display:flex;gap:8px;}
 .doctype{margin-bottom:8px;}
 .doctypebtn{width:100%;display:flex;align-items:center;gap:8px;padding:11px 12px;border:1px solid var(--line);border-radius:10px;background:var(--surface);font:inherit;text-align:left;}
 .doctypebtn.open{border-color:var(--ink);background:var(--bg);}
-.doctypebtn .chev{color:var(--muted);font-size:12px;width:14px;}
-.doctypebtn .tname{flex:1;font-size:14px;font-weight:700;color:var(--ink);}
-.doctypebtn .tcount{font-size:12px;color:var(--muted);}
+.doctypebtn .chev{color:var(--muted);font-size:0.75rem;width:14px;}
+.doctypebtn .tname{flex:1;font-size:0.875rem;font-weight:700;color:var(--ink);}
+.doctypebtn .tcount{font-size:0.75rem;color:var(--muted);}
 .doctypelist{padding:2px 12px 4px;}
 /* 収支サマリ */
 .balrow{display:flex;gap:10px;}
 .balrow .cell{flex:1;text-align:center;border-radius:10px;padding:4px 0;cursor:pointer;border:1px solid transparent;}
 .balrow .cell.selcell{background:var(--bg);border-color:var(--line);}
-.balrow .t{font-size:12px;color:var(--muted);}
-.balrow .v{font-size:18px;font-weight:700;}
+.balrow .t{font-size:0.75rem;color:var(--muted);}
+.balrow .v{font-size:1.125rem;font-weight:700;}
 .v.inc{color:var(--income);} .v.exp{color:var(--expense);}
 .bigbal{text-align:center;margin:4px 0 10px;}
-.bigbal .v{font-size:34px;font-weight:800;letter-spacing:.01em;}
-.bigbal .t{font-size:12px;color:var(--muted);letter-spacing:.1em;}
+.bigbal .v{font-size:2.125rem;font-weight:800;letter-spacing:.01em;}
+.bigbal .t{font-size:0.75rem;color:var(--muted);letter-spacing:.1em;}
 canvas{display:block;width:100%;}
 /* 凡例 */
-.legend{display:grid;grid-template-columns:1fr 1fr;gap:4px 14px;margin-top:10px;font-size:13px;}
+.legend{display:grid;grid-template-columns:1fr 1fr;gap:4px 14px;margin-top:10px;font-size:0.8125rem;}
 .legend .li{display:flex;align-items:center;justify-content:space-between;gap:8px;}
 .legend .nm{display:flex;align-items:center;gap:7px;min-width:0;}
 .legend .nm span.txt{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
@@ -82,44 +92,44 @@ canvas{display:block;width:100%;}
 /* 医療費プログレス */
 .prog{height:10px;background:var(--bg);border-radius:6px;overflow:hidden;margin-top:8px;border:1px solid var(--line);}
 .prog>i{display:block;height:100%;background:#4E7AA6;border-radius:6px;}
-.progmeta{display:flex;justify-content:space-between;font-size:12px;color:var(--muted);margin-top:5px;}
+.progmeta{display:flex;justify-content:space-between;font-size:0.75rem;color:var(--muted);margin-top:5px;}
 /* 明細リスト */
 .txrow{display:flex;align-items:center;gap:10px;padding:11px 2px;border-bottom:1px solid var(--line);}
 .txrow:last-child{border-bottom:none;}
 .txrow .cat{flex:0 0 10px;}
 .txrow .mid{flex:1;min-width:0;}
-.txrow .nm{font-size:15px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.txrow .meta{font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.txrow .amt{font-size:15px;font-weight:700;white-space:nowrap;}
+.txrow .nm{font-size:0.9375rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.txrow .meta{font-size:0.75rem;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.txrow .amt{font-size:0.9375rem;font-weight:700;white-space:nowrap;}
 .amt.exp{color:var(--expense);} .amt.inc{color:var(--income);} .amt.trf{color:var(--transfer);}
-.daterule{font-size:12px;color:var(--muted);background:var(--bg);padding:3px 10px;border-radius:8px;
+.daterule{font-size:0.75rem;color:var(--muted);background:var(--bg);padding:3px 10px;border-radius:8px;
   margin:10px 0 2px;display:inline-block;}
 .filterbar{display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap;}
 .catchips{margin:8px 0 10px;}
 .catchips-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;}
-.catchips-label{font-size:12px;font-weight:700;color:var(--muted);}
-.catclear{font-size:12px;font-weight:600;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:14px;padding:3px 12px;}
+.catchips-label{font-size:0.75rem;font-weight:700;color:var(--muted);}
+.catclear{font-size:0.75rem;font-weight:600;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:14px;padding:3px 12px;}
 .chiprow{display:flex;flex-wrap:wrap;gap:6px;}
-.catchip{font-size:12.5px;font-weight:600;color:var(--ink);background:var(--surface);border:1px solid var(--line);border-radius:15px;padding:6px 12px;line-height:1;}
+.catchip{font-size:0.7812rem;font-weight:600;color:var(--ink);background:var(--surface);border:1px solid var(--line);border-radius:15px;padding:6px 12px;line-height:1;}
 .catchip.on{box-shadow:0 1px 3px rgba(0,0,0,.12);}
 .catfilter{display:flex;align-items:center;gap:8px;margin:8px 0 8px;}
-.catopen{flex:1;display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border:1px solid var(--line);border-radius:10px;background:var(--surface);font:inherit;font-size:14px;font-weight:600;color:var(--ink);}
-.catopen-chev{color:var(--muted);font-size:12px;}
-.catsec-title{font-size:12px;font-weight:700;color:var(--muted);margin:12px 0 6px;}
+.catopen{flex:1;display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border:1px solid var(--line);border-radius:10px;background:var(--surface);font:inherit;font-size:0.875rem;font-weight:600;color:var(--ink);}
+.catopen-chev{color:var(--muted);font-size:0.75rem;}
+.catsec-title{font-size:0.75rem;font-weight:700;color:var(--muted);margin:12px 0 6px;}
 .bigcat-overlay{position:fixed;inset:0;background:var(--bg);z-index:40;display:flex;flex-direction:column;}
 .bigcat-panel{display:flex;flex-direction:column;height:100%;width:100%;max-width:760px;margin:0 auto;}
 .bigcat-head{padding:calc(18px + env(safe-area-inset-top)) 22px 14px;border-bottom:1px solid var(--line);background:var(--surface);}
-.bigcat-title{font-size:24px;font-weight:800;color:var(--ink);}
+.bigcat-title{font-size:1.5rem;font-weight:800;color:var(--ink);}
 .bigcat-body{flex:1;overflow:auto;padding:8px 18px 18px;}
-.bigcat-sec{font-size:18px;font-weight:800;color:var(--muted);margin:22px 4px 12px;}
+.bigcat-sec{font-size:1.125rem;font-weight:800;color:var(--muted);margin:22px 4px 12px;}
 .bigcat-sec:first-child{margin-top:14px;}
 .bigcat-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
-.bigcat-chip{display:flex;align-items:center;gap:12px;padding:18px 16px;border:2px solid var(--line);border-radius:16px;background:var(--surface);font:inherit;font-size:18px;font-weight:700;color:var(--ink);text-align:left;line-height:1.2;}
+.bigcat-chip{display:flex;align-items:center;gap:12px;padding:18px 16px;border:2px solid var(--line);border-radius:16px;background:var(--surface);font:inherit;font-size:1.125rem;font-weight:700;color:var(--ink);text-align:left;line-height:1.2;}
 .bigcat-chip.on{box-shadow:0 2px 8px rgba(0,0,0,.18);}
 .bigcat-dot{width:18px;height:18px;border-radius:50%;flex:none;}
 .bigcat-chip.on .bigcat-dot{background:#fff !important;}
 .bigcat-foot{display:flex;gap:12px;padding:14px 18px calc(16px + env(safe-area-inset-bottom));border-top:1px solid var(--line);background:var(--surface);}
-.bigcat-btn{flex:1;padding:18px;border:none;border-radius:14px;background:var(--ink);color:#fff;font:inherit;font-size:19px;font-weight:800;}
+.bigcat-btn{flex:1;padding:18px;border:none;border-radius:14px;background:var(--ink);color:#fff;font:inherit;font-size:1.1875rem;font-weight:800;}
 .bigcat-btn.sub{background:var(--surface);color:var(--ink);border:2px solid var(--line);}
 .catsec-title:first-child{margin-top:0;}
 select,input[type=text],input[type=date],input[type=number]{
@@ -132,47 +142,47 @@ select,input[type=text],input[type=date],input[type=number]{
 .btn.sub{background:var(--surface);color:var(--ink);border:1px solid var(--line);font-weight:600;}
 .btn.danger{background:#fff;color:var(--expense);border:1px solid var(--expense);}
 .btn:active{opacity:.8;}
-.btn.small{width:auto;padding:8px 14px;font-size:14px;}
+.btn.small{width:auto;padding:8px 14px;font-size:0.875rem;}
 .fab{position:fixed;right:18px;bottom:calc(76px + env(safe-area-inset-bottom));z-index:9;
-  width:54px;height:54px;border-radius:50%;background:var(--accent);color:#fff;font-size:28px;
+  width:54px;height:54px;border-radius:50%;background:var(--accent);color:#fff;font-size:1.75rem;
   border:none;box-shadow:0 4px 14px rgba(27,42,74,.3);}
 /* タブバー */
 nav.tabbar{position:fixed;left:0;right:0;bottom:0;z-index:20;background:rgba(255,255,255,.96);
   -webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);border-top:1px solid var(--line);
   display:flex;padding-bottom:env(safe-area-inset-bottom);}
-nav.tabbar button{flex:1;background:none;border:none;padding:9px 0 7px;font-size:11px;color:var(--muted);
+nav.tabbar button{flex:1;background:none;border:none;padding:9px 0 7px;font-size:0.6875rem;color:var(--muted);
   display:flex;flex-direction:column;align-items:center;gap:2px;font-family:inherit;}
 nav.tabbar button.on{color:var(--ink);font-weight:700;}
-nav.tabbar .ic{font-size:21px;line-height:1;}
+nav.tabbar .ic{font-size:1.3125rem;line-height:1;}
 /* モーダル */
 .modalbg{position:fixed;inset:0;background:rgba(20,28,46,.45);z-index:30;display:flex;align-items:flex-end;}
 .modal{background:var(--surface);width:100%;max-width:680px;margin:0 auto;border-radius:18px 18px 0 0;
   padding:18px 18px calc(18px + env(safe-area-inset-bottom));max-height:86vh;overflow:auto;}
-.modal h3{margin:0 0 12px;font-size:17px;}
+.modal h3{margin:0 0 12px;font-size:1.0625rem;}
 .frow{margin-bottom:12px;}
-.frow label{display:block;font-size:12px;color:var(--muted);margin-bottom:4px;}
+.frow label{display:block;font-size:0.75rem;color:var(--muted);margin-bottom:4px;}
 .frow select,.frow input{width:100%;}
 .chips{display:flex;gap:8px;flex-wrap:wrap;}
 .chip{padding:7px 13px;border-radius:999px;border:1px solid var(--line);background:var(--surface);
-  font-size:13px;color:var(--ink);}
+  font-size:0.8125rem;color:var(--ink);}
 .chip.on{background:var(--ink);color:#fff;border-color:var(--ink);}
-.checkrow{display:flex;align-items:center;gap:8px;font-size:14px;margin:10px 0;}
+.checkrow{display:flex;align-items:center;gap:8px;font-size:0.875rem;margin:10px 0;}
 .checkrow input{width:20px;height:20px;}
 /* 取込 */
-.dropmsg{font-size:13px;color:var(--muted);}
-.implog{font-size:13px;background:var(--bg);border-radius:10px;padding:10px 12px;margin-top:10px;
+.dropmsg{font-size:0.8125rem;color:var(--muted);}
+.implog{font-size:0.8125rem;background:var(--bg);border-radius:10px;padding:10px 12px;margin-top:10px;
   white-space:pre-wrap;}
-.srcbadge{font-size:10px;border:1px solid var(--line);border-radius:5px;padding:1px 5px;color:var(--muted);
+.srcbadge{font-size:0.625rem;border:1px solid var(--line);border-radius:5px;padding:1px 5px;color:var(--muted);
   margin-right:5px;vertical-align:1px;}
 /* ルール表 */
-.rulerow{display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--line);font-size:14px;}
+.rulerow{display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--line);font-size:0.875rem;}
 .rulerow .kw{flex:1;font-weight:600;word-break:break-all;}
-.rulerow .to{color:var(--muted);font-size:12px;}
-.rulerow button{border:none;background:none;color:var(--expense);font-size:13px;font-family:inherit;}
-.empty{text-align:center;color:var(--muted);padding:30px 10px;font-size:14px;}
-.note{font-size:12px;color:var(--muted);margin-top:8px;}
-h2.sec{font-size:14px;margin:18px 4px 8px;color:var(--ink);}
-.ttbl{font-size:13px;}
+.rulerow .to{color:var(--muted);font-size:0.75rem;}
+.rulerow button{border:none;background:none;color:var(--expense);font-size:0.8125rem;font-family:inherit;}
+.empty{text-align:center;color:var(--muted);padding:30px 10px;font-size:0.875rem;}
+.note{font-size:0.75rem;color:var(--muted);margin-top:8px;}
+h2.sec{font-size:0.875rem;margin:18px 4px 8px;color:var(--ink);}
+.ttbl{font-size:0.8125rem;}
 .ttbl .r{display:flex;justify-content:space-between;gap:10px;padding:5px 0;border-bottom:1px solid var(--line);}
 .ttbl .r:last-child{border-bottom:none;}
 .ttbl .r span:last-child{font-variant-numeric:tabular-nums;white-space:nowrap;}
@@ -1132,9 +1142,11 @@ function drawDonut(canvas, items, centerLabel, centerValue){
       a+=ang;
     }
   }
-  ctx.fillStyle="#8A8F98";ctx.font="11px -apple-system,'Hiragino Sans'";
+  const fs=parseFloat(getComputedStyle(document.body).getPropertyValue("--basefs"))||16;
+  const k=fs/16;
+  ctx.fillStyle="#8A8F98";ctx.font=`${11*k}px -apple-system,'Hiragino Sans'`;
   ctx.textAlign="center";ctx.fillText(centerLabel,cx,cy-12);
-  ctx.fillStyle="#1B2A4A";ctx.font="700 21px -apple-system,'Hiragino Sans'";
+  ctx.fillStyle="#1B2A4A";ctx.font=`700 ${21*k}px -apple-system,'Hiragino Sans'`;
   ctx.fillText(centerValue,cx,cy+12);
 }
 function drawBars(canvas, labels, incs, exps){
@@ -1145,7 +1157,8 @@ function drawBars(canvas, labels, incs, exps){
   const max=Math.max(1,...incs,...exps);
   const n=labels.length, slot=w/n, bw=Math.min(16,slot/3.2);
   const base=h-22, top=14;
-  ctx.font="10px -apple-system,'Hiragino Sans'";ctx.textAlign="center";
+  const _fs=parseFloat(getComputedStyle(document.body).getPropertyValue("--basefs"))||16;
+  ctx.font=`${10*(_fs/16)}px -apple-system,'Hiragino Sans'`;ctx.textAlign="center";
   for(let i=0;i<n;i++){
     const x=slot*i+slot/2;
     const ih=(incs[i]/max)*(base-top), eh=(exps[i]/max)*(base-top);
@@ -1277,7 +1290,7 @@ async function renderHome(){
   <div class="card">
     <h2>${year}年 医療費の累計(確定申告メモ)</h2>
     <div style="display:flex;justify-content:space-between;align-items:baseline">
-      <div class="v num" style="font-size:20px;font-weight:700">${yen(med)}</div>
+      <div class="v num" style="font-size:1.25rem;font-weight:700">${yen(med)}</div>
       <div class="note">医療費控除ライン ¥100,000</div>
     </div>
     <div class="prog"><i style="width:${medPct}%"></i></div>
@@ -1560,8 +1573,8 @@ async function renderImport(){
   const histHtml = log.length ? log.slice(0,30).map(e=>`
     <div class="rulerow">
       <div style="flex:1;min-width:0">
-        <div style="font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(e.file)}</div>
-        <div style="font-size:11px;color:var(--muted)">${fmtTs(e.ts)}${e.fmt?` ・ ${esc(e.fmt)}`:""}</div>
+        <div style="font-size:0.8125rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(e.file)}</div>
+        <div style="font-size:0.6875rem;color:var(--muted)">${fmtTs(e.ts)}${e.fmt?` ・ ${esc(e.fmt)}`:""}</div>
       </div>
       <span class="to" style="white-space:nowrap;${e.err?"color:var(--expense)":""}">${
         e.err?esc(e.err):`取込${e.added}件`+(e.dup?` / 重複${e.dup}`:"")+(e.excluded?` / 除外${e.excluded}`:"")+(e.balN?` / 残高${e.balN}月`:"")
@@ -1584,16 +1597,16 @@ async function renderImport(){
   </div>
   <div class="card">
     <h2>各サービスでのCSVの取り方</h2>
-    <p style="font-size:13px;margin:6px 0"><b>PayPayカード</b>:PayPayアプリ → カード → ご利用明細 → CSVダウンロード(請求月ごと)。利用日ベースで計上し、請求総額を「カード未払金」に記録します。毎月取り込んでください。</p>
-    <p style="font-size:13px;margin:6px 0"><b>三井住友銀行</b>:SMBCダイレクト → 入出金明細 → 「明細をダウンロード」(CSV)</p>
-    <p style="font-size:13px;margin:6px 0"><b>Olive(三井住友カード)</b>:Vpass → ご利用明細 → 「CSVで保存」。お支払い月ごとのファイルを毎月取り込んでください</p>
-    <p style="font-size:13px;margin:6px 0"><b>イオン銀行</b>:イオン銀行ダイレクト → 入出金明細照会 → 期間指定 → 照会結果画面で「CSV形式」をダウンロード(前年同月以降・直近400件まで)。月末残高も自動記録されます。</p>
-    <p style="font-size:13px;margin:6px 0"><b>イオンカード</b>:暮らしのマネーサイト → ご利用明細 → CSVダウンロード(請求月ごと)。利用日ベースで計上し、請求額を「カード未払金」に記録します。2枚ある場合は各カードの明細を取り込んでください。</p>
-    <p style="font-size:13px;margin:6px 0"><b>セゾンカード(三井ショッピングパークカード等)</b>:Netアンサー → ご利用明細 → CSVダウンロード。お支払い月ごとのファイルを毎月取り込んでください。</p>
+    <p style="font-size:0.8125rem;margin:6px 0"><b>PayPayカード</b>:PayPayアプリ → カード → ご利用明細 → CSVダウンロード(請求月ごと)。利用日ベースで計上し、請求総額を「カード未払金」に記録します。毎月取り込んでください。</p>
+    <p style="font-size:0.8125rem;margin:6px 0"><b>三井住友銀行</b>:SMBCダイレクト → 入出金明細 → 「明細をダウンロード」(CSV)</p>
+    <p style="font-size:0.8125rem;margin:6px 0"><b>Olive(三井住友カード)</b>:Vpass → ご利用明細 → 「CSVで保存」。お支払い月ごとのファイルを毎月取り込んでください</p>
+    <p style="font-size:0.8125rem;margin:6px 0"><b>イオン銀行</b>:イオン銀行ダイレクト → 入出金明細照会 → 期間指定 → 照会結果画面で「CSV形式」をダウンロード(前年同月以降・直近400件まで)。月末残高も自動記録されます。</p>
+    <p style="font-size:0.8125rem;margin:6px 0"><b>イオンカード</b>:暮らしのマネーサイト → ご利用明細 → CSVダウンロード(請求月ごと)。利用日ベースで計上し、請求額を「カード未払金」に記録します。2枚ある場合は各カードの明細を取り込んでください。</p>
+    <p style="font-size:0.8125rem;margin:6px 0"><b>セゾンカード(三井ショッピングパークカード等)</b>:Netアンサー → ご利用明細 → CSVダウンロード。お支払い月ごとのファイルを毎月取り込んでください。</p>
   </div>
   <div class="card">
     <h2>二重計上を防ぐしくみ</h2>
-    <p style="font-size:13px;margin:6px 0">カードでの支払いは、後日銀行口座からまとめて引き落とされます。このアプリでは<b>カード明細側(PayPay・Olive)を利用日ベースの支出として計上</b>し、銀行側の「PAYPAYカード」「ミツイスミトモカード」引落は自動的に「振替(対象外)」へ分類して二重計上を防ぎます。ご本人名義間の口座振込も同様です。Oliveの明細は毎月取り込む運用にしてください(取り込まない月はカード支出が記録されなくなります)。</p>
+    <p style="font-size:0.8125rem;margin:6px 0">カードでの支払いは、後日銀行口座からまとめて引き落とされます。このアプリでは<b>カード明細側(PayPay・Olive)を利用日ベースの支出として計上</b>し、銀行側の「PAYPAYカード」「ミツイスミトモカード」引落は自動的に「振替(対象外)」へ分類して二重計上を防ぎます。ご本人名義間の口座振込も同様です。Oliveの明細は毎月取り込む運用にしてください(取り込まない月はカード支出が記録されなくなります)。</p>
   </div>`;
   el("pick").onclick=()=>el("files").click();
   el("files").onchange=async e=>{
@@ -1617,6 +1630,16 @@ async function renderSettings(){
   await loadRules();
   const txs=await tall("tx");
   el("view").innerHTML=`
+  <div class="card">
+    <h2>文字サイズ(老眼対策)</h2>
+    <p class="note" style="margin-top:0">アプリ全体の文字の大きさを変えられます。いつでも切り替えできます。</p>
+    <div class="fssel">
+      <button class="fsbtn" data-fs="normal">標準</button>
+      <button class="fsbtn" data-fs="large">大</button>
+      <button class="fsbtn" data-fs="xlarge">特大</button>
+    </div>
+    <p class="note" style="margin-bottom:0">プレビュー: <span style="font-weight:700">¥193,276 / 外食 ¥72,902</span></p>
+  </div>
   <div class="card">
     <h2>自動分類ルール(${rulesCache.length}件)</h2>
     <p class="note" style="margin-top:0">取引先や摘要に含まれる文字で自動分類します。上から順に判定されます。</p>
@@ -1653,6 +1676,12 @@ async function renderSettings(){
       await loadRules();drawRules();});
   };
   drawRules();
+  // 文字サイズ切替
+  const curFs=localStorage.getItem("fontSize")||"normal";
+  el("view").querySelectorAll(".fsbtn").forEach(b=>{
+    if(b.dataset.fs===curFs) b.classList.add("on");
+    b.onclick=()=>applyFontSize(b.dataset.fs); // applyFontSizeがrenderTabを呼び再描画
+  });
   el("rAdd").onclick=async()=>{
     const kw=el("rKw").value.trim(); if(!kw)return;
     await tput("rules",{kw,cat:el("rCat").value});
@@ -1776,19 +1805,19 @@ async function renderAssets(){
       if(isAuto){ // 自動口座: 入力不可・CSVの自動値を表示するだけ
         const shown=b?b.amount:(cb?cb.amount:null);
         return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
-          <span style="flex:1;font-size:14px;font-weight:600">${nameTags}</span>
-          <span style="width:140px;text-align:right;font-size:15px;font-weight:700;color:${shown!=null?'var(--ink)':'var(--muted)'};font-variant-numeric:tabular-nums">${shown!=null?shown.toLocaleString():"—"}</span>
+          <span style="flex:1;font-size:0.875rem;font-weight:600">${nameTags}</span>
+          <span style="width:140px;text-align:right;font-size:0.9375rem;font-weight:700;color:${shown!=null?'var(--ink)':'var(--muted)'};font-variant-numeric:tabular-nums">${shown!=null?shown.toLocaleString():"—"}</span>
         </div>`;
       }
       return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
-        <span style="flex:1;font-size:14px;font-weight:600">${nameTags}</span>
+        <span style="flex:1;font-size:0.875rem;font-weight:600">${nameTags}</span>
         <input type="number" inputmode="numeric" data-aid="${a.aid}" class="balIn" style="width:140px;text-align:right" value="${b?b.amount:""}" placeholder="${cb?cb.amount:"未入力"}">
       </div>`;}).join("")}
     ${cardEntries.length?`<div style="margin:2px 0 12px 0;padding:10px 12px;background:var(--bg);border-radius:8px">
-      <div style="font-size:12px;color:var(--muted);font-weight:600;margin-bottom:6px">カード未払金の内訳(${monthLabel(m)})</div>
-      ${cardEntries.map(([card,amt])=>`<div style="display:flex;justify-content:space-between;font-size:13px;padding:3px 0">
+      <div style="font-size:0.75rem;color:var(--muted);font-weight:600;margin-bottom:6px">カード未払金の内訳(${monthLabel(m)})</div>
+      ${cardEntries.map(([card,amt])=>`<div style="display:flex;justify-content:space-between;font-size:0.8125rem;padding:3px 0">
         <span>${esc(card)}</span><span style="font-weight:600;font-variant-numeric:tabular-nums">${amt.toLocaleString()}</span></div>`).join("")}
-      <div style="display:flex;justify-content:space-between;font-size:13px;padding:6px 0 0;margin-top:4px;border-top:1px solid var(--line)">
+      <div style="display:flex;justify-content:space-between;font-size:0.8125rem;padding:6px 0 0;margin-top:4px;border-top:1px solid var(--line)">
         <span style="font-weight:700">合計</span><span style="font-weight:700;font-variant-numeric:tabular-nums">${cardEntries.reduce((s,[,v])=>s+v,0).toLocaleString()}</span></div>
     </div>`:""}
     <button class="btn" id="balSave">この月の残高を保存</button>
@@ -1805,7 +1834,7 @@ async function renderAssets(){
   <div class="card">
     <h2>記録漏れチェック(参考)</h2>
     ${gap!=null?`
-    <div style="font-size:14px">前月末純資産 ＋ 今月の収支 − 今月末純資産 ＝
+    <div style="font-size:0.875rem">前月末純資産 ＋ 今月の収支 − 今月末純資産 ＝
       <b class="num" style="color:${gap>0?'var(--expense)':'var(--income)'}">${yen(gap)}</b></div>
     <p class="note">プラスは家計簿に記録されていない支出(現金払いなど)の推定です。カード利用と引落の時期ズレも含まれるため、目安としてご覧ください。</p>`
     :`<p class="note" style="margin:0">当月と前月の残高が揃うと、記録漏れ(現金支出など)の推定が表示されます。</p>`}
@@ -2056,7 +2085,7 @@ async function renderTax(){
   <div class="card"><h2>所得控除</h2>
     <div class="frow"><label>社会保険料(源泉徴収票の額+国保・任意の国民年金など)</label>
       <input type="number" inputmode="numeric" class="txin" id="t_shaho" value="${v.shaho}"></div>
-    <label style="display:block;font-size:12px;color:var(--muted);margin:10px 0 4px">生命保険料(証明書の支払額 → 控除額は自動計算)</label>
+    <label style="display:block;font-size:0.75rem;color:var(--muted);margin:10px 0 4px">生命保険料(証明書の支払額 → 控除額は自動計算)</label>
     <div class="grid2">
       <input type="number" class="txin" id="t_sn" value="${v.sn}" placeholder="新生命保険料">
       <input type="number" class="txin" id="t_so" value="${v.so}" placeholder="旧生命保険料">
@@ -2136,7 +2165,7 @@ async function renderTax(){
     </div>
     <div class="card"><h2>ふるさと納税 限度額シミュレーション</h2>
       <div style="display:flex;justify-content:space-between;align-items:baseline">
-        <div class="v num" style="font-size:20px;font-weight:700">${yen(r.furuLimit)}</div>
+        <div class="v num" style="font-size:1.25rem;font-weight:700">${yen(r.furuLimit)}</div>
         <div class="note">自己負担2,000円で済む上限の目安</div>
       </div>
       <div class="prog"><i style="width:${Math.min(100,r.furuLimit>0?r.don/r.furuLimit*100:0)}%;background:#3C7A55"></i></div>
@@ -2171,8 +2200,8 @@ async function renderTax(){
         ${open?`<div class="doctypelist">${list.map(d=>`<div class="docitem">
           <div class="docname">${esc(d.name)}</div>
           <div class="docbtns">
-            <button class="btn sub small docView" data-did="${d.did}" style="padding:4px 14px;font-size:12px;width:auto">開く</button>
-            <button class="btn sub small docDel" data-did="${d.did}" style="padding:4px 14px;font-size:12px;width:auto;color:var(--expense)">削除</button>
+            <button class="btn sub small docView" data-did="${d.did}" style="padding:4px 14px;font-size:0.75rem;width:auto">開く</button>
+            <button class="btn sub small docDel" data-did="${d.did}" style="padding:4px 14px;font-size:0.75rem;width:auto;color:var(--expense)">削除</button>
           </div>
         </div>`).join("")}</div>`:""}
       </div>`;}).join("");
@@ -2209,6 +2238,14 @@ async function renderTax(){
 
 /* ---------- モーダル・タブ ---------- */
 const el=id=>document.getElementById(id);
+function applyFontSize(size){
+  document.body.classList.remove("fs-large","fs-xlarge");
+  if(size==="large") document.body.classList.add("fs-large");
+  else if(size==="xlarge") document.body.classList.add("fs-xlarge");
+  try{ localStorage.setItem("fontSize",size); }catch(e){}
+  // キャンバス系(ドーナツ・棒グラフ)も再描画して反映
+  if(typeof renderTab==="function" && document.getElementById("view")) renderTab();
+}
 function openCatPicker(cats, onChange){
   const grp={expense:[],income:[],transfer:[]};
   for(const c of cats){ const t=(CAT[c]||{}).type||"expense"; (grp[t]||grp.expense).push(c); }
@@ -2264,9 +2301,9 @@ function openDocViewer(blob,name,mime){
     : `<iframe src="${url}" style="width:100%;height:70vh;border:none;border-radius:8px;background:#fff"></iframe>`;
   el("modalRoot").innerHTML=`<div class="modalbg" id="mbg"><div class="modal" style="max-width:760px;width:94%">
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
-      <span style="flex:1;min-width:0;font-size:14px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(name)}</span>
-      <button class="btn sub small" id="docDl" style="padding:4px 12px;font-size:12px;width:auto">保存・共有</button>
-      <button class="btn sub small" id="docClose" style="padding:4px 12px;font-size:12px;width:auto">閉じる</button>
+      <span style="flex:1;min-width:0;font-size:0.875rem;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(name)}</span>
+      <button class="btn sub small" id="docDl" style="padding:4px 12px;font-size:0.75rem;width:auto">保存・共有</button>
+      <button class="btn sub small" id="docClose" style="padding:4px 12px;font-size:0.75rem;width:auto">閉じる</button>
     </div>
     ${body}
     <p class="note" style="margin:8px 0 0">表示されない場合は「保存・共有」からファイルアプリに保存して開いてください。</p>
@@ -2292,6 +2329,7 @@ el("fab").onclick=openManualAdd;
 
 /* ---------- 起動 ---------- */
 (async()=>{
+  applyFontSize(localStorage.getItem("fontSize")||"normal");
   await openDB();
   await seedIfNeeded();
   await loadRules();
