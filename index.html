@@ -106,6 +106,21 @@ canvas{display:block;width:100%;}
 .catopen{flex:1;display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border:1px solid var(--line);border-radius:10px;background:var(--surface);font:inherit;font-size:14px;font-weight:600;color:var(--ink);}
 .catopen-chev{color:var(--muted);font-size:12px;}
 .catsec-title{font-size:12px;font-weight:700;color:var(--muted);margin:12px 0 6px;}
+.bigcat-overlay{position:fixed;inset:0;background:var(--bg);z-index:40;display:flex;flex-direction:column;}
+.bigcat-panel{display:flex;flex-direction:column;height:100%;width:100%;max-width:760px;margin:0 auto;}
+.bigcat-head{padding:calc(18px + env(safe-area-inset-top)) 22px 14px;border-bottom:1px solid var(--line);background:var(--surface);}
+.bigcat-title{font-size:24px;font-weight:800;color:var(--ink);}
+.bigcat-body{flex:1;overflow:auto;padding:8px 18px 18px;}
+.bigcat-sec{font-size:18px;font-weight:800;color:var(--muted);margin:22px 4px 12px;}
+.bigcat-sec:first-child{margin-top:14px;}
+.bigcat-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
+.bigcat-chip{display:flex;align-items:center;gap:12px;padding:18px 16px;border:2px solid var(--line);border-radius:16px;background:var(--surface);font:inherit;font-size:18px;font-weight:700;color:var(--ink);text-align:left;line-height:1.2;}
+.bigcat-chip.on{box-shadow:0 2px 8px rgba(0,0,0,.18);}
+.bigcat-dot{width:18px;height:18px;border-radius:50%;flex:none;}
+.bigcat-chip.on .bigcat-dot{background:#fff !important;}
+.bigcat-foot{display:flex;gap:12px;padding:14px 18px calc(16px + env(safe-area-inset-bottom));border-top:1px solid var(--line);background:var(--surface);}
+.bigcat-btn{flex:1;padding:18px;border:none;border-radius:14px;background:var(--ink);color:#fff;font:inherit;font-size:19px;font-weight:800;}
+.bigcat-btn.sub{background:var(--surface);color:var(--ink);border:2px solid var(--line);}
 .catsec-title:first-child{margin-top:0;}
 select,input[type=text],input[type=date],input[type=number]{
   font:inherit;padding:9px 10px;border:1px solid var(--line);border-radius:10px;background:var(--surface);
@@ -229,6 +244,13 @@ const SEED_RULES = [
   {kw:"セゾン",          cat:"振替(対象外)"},
   {kw:"ﾐﾂｲｽﾐﾄﾓｶ-ﾄﾞ",     cat:"振替(対象外)"},   // Olive明細側で計上するため
   {kw:"ｲｵﾝﾌｲﾅﾝｼﾔﾙ",      cat:"振替(対象外)"},   // イオンカード明細側で計上するため
+  {kw:"キャッシュバック",cat:"振替(対象外)"},   // ポイント交換・現金以外の動き
+  {kw:"ポイント交換",    cat:"振替(対象外)"},
+  {kw:"ポイント利用",    cat:"振替(対象外)"},
+  {kw:"ポイント充当",    cat:"振替(対象外)"},
+  {kw:"ポイントご利用",  cat:"振替(対象外)"},
+  {kw:"ﾎﾟｲﾝﾄ利用",       cat:"振替(対象外)"},
+  {kw:"ﾎﾟｲﾝﾄ交換",       cat:"振替(対象外)"},
   {kw:"イオンフィナンシャル",cat:"振替(対象外)"},
   {kw:"ｶﾝｻｲﾃﾞﾝﾘﾖｸ",      cat:"水道光熱"},
   {kw:"電力",            cat:"水道光熱"},
@@ -395,6 +417,7 @@ async function seedIfNeeded(){
     await tput("meta",{k:"mig5",v:1});
     await tput("meta",{k:"mig6",v:1});
     await tput("meta",{k:"mig7",v:1});
+    await tput("meta",{k:"mig8",v:1});
   }
   if(!(await tget("meta","seededAcc"))){
     for(const [name,kind] of [["イオン銀行","asset"],["三井住友銀行","asset"],["財布(現金)","asset"]])
@@ -531,6 +554,23 @@ async function migrate7(){
     if(t.category+"|"+t.type!==before) await tput("tx",t);
   }
   await tput("meta",{k:"mig7",v:1});
+  await migrate8();
+}
+async function migrate8(){
+  if(await tget("meta","mig8")) return;
+  const existingKw=new Set((await tall("rules")).map(r=>r.kw));
+  const add=[["キャッシュバック","振替(対象外)"],["ポイント交換","振替(対象外)"],
+    ["ポイント利用","振替(対象外)"],["ポイント充当","振替(対象外)"],["ポイントご利用","振替(対象外)"],
+    ["ﾎﾟｲﾝﾄ利用","振替(対象外)"],["ﾎﾟｲﾝﾄ交換","振替(対象外)"]];
+  for(const [kw,cat] of add) if(!existingKw.has(kw)) await tput("rules",{kw,cat});
+  await loadRules();
+  for(const t of await tall("tx")){
+    if(t.locked) continue;
+    const before=t.category+"|"+t.type;
+    categorize(t);
+    if(t.category+"|"+t.type!==before) await tput("tx",t);
+  }
+  await tput("meta",{k:"mig8",v:1});
 }
 async function ensureAccount(name,kind){
   let a=(await tall("accounts")).find(x=>x.name===name);
@@ -1074,13 +1114,15 @@ function drawDonut(canvas, items, centerLabel, centerValue){
   canvas.width=w*dpr; canvas.height=h*dpr; canvas.style.height=h+"px";
   const ctx=canvas.getContext("2d"); ctx.scale(dpr,dpr);
   const cx=w/2, cy=h/2, R=Math.min(w,h)/2-10, r=R*0.66;
-  const total=items.reduce((s,i)=>s+i.v,0);
+  // 円グラフはプラスの項目のみで構成(返金などのマイナスや0は除外)
+  const pos=items.filter(i=>i.v>0);
+  const total=pos.reduce((s,i)=>s+i.v,0);
   let a=-Math.PI/2;
   if(total<=0){
     ctx.strokeStyle="#E3E6E0";ctx.lineWidth=R-r;
     ctx.beginPath();ctx.arc(cx,cy,(R+r)/2,0,Math.PI*2);ctx.stroke();
   }else{
-    for(const it of items){
+    for(const it of pos){
       const ang=it.v/total*Math.PI*2;
       const gap=Math.min(0.012, ang*0.25); // 極小セグメントでも開始角<終了角を保証
       ctx.beginPath();
@@ -2171,28 +2213,34 @@ function openCatPicker(cats, onChange){
   const grp={expense:[],income:[],transfer:[]};
   for(const c of cats){ const t=(CAT[c]||{}).type||"expense"; (grp[t]||grp.expense).push(c); }
   const section=(title,list)=> list.length?`
-    <div class="catsec-title">${title}</div>
-    <div class="chiprow">
+    <div class="bigcat-sec">${title}</div>
+    <div class="bigcat-grid">
       ${list.map(c=>{const on=S.filterCats.includes(c);const col=(CAT[c]||{}).color||"#9AA0A6";
-        return `<button class="catchip ${on?'on':''}" data-cat="${esc(c)}" style="${on?`background:${col};border-color:${col};color:#fff`:''}">${esc(c)}</button>`;}).join("")}
+        return `<button class="bigcat-chip ${on?'on':''}" data-cat="${esc(c)}" style="${on?`background:${col};border-color:${col};color:#fff`:`--cc:${col}`}">
+          <span class="bigcat-dot" style="background:${col}"></span><span>${esc(c)}</span>
+        </button>`;}).join("")}
     </div>`:"";
   const body=()=>`
-    <div style="display:flex;align-items:center;margin-bottom:10px">
-      <span style="flex:1;font-size:16px;font-weight:700">カテゴリで絞り込み${S.filterCats.length?`(${S.filterCats.length})`:""}</span>
-      ${S.filterCats.length?`<button class="catclear" id="pkClear" style="margin-right:8px">クリア</button>`:""}
-      <button class="catclear" id="pkClose">閉じる</button>
+    <div class="bigcat-head">
+      <span class="bigcat-title">カテゴリで絞り込み${S.filterCats.length?`(${S.filterCats.length})`:""}</span>
     </div>
-    ${section("支出",grp.expense)}
-    ${section("収入",grp.income)}
-    ${grp.transfer.length?section("その他",grp.transfer):""}`;
-  showModal(body());
+    <div class="bigcat-body">
+      ${section("支出",grp.expense)}
+      ${section("収入",grp.income)}
+      ${grp.transfer.length?section("その他",grp.transfer):""}
+    </div>
+    <div class="bigcat-foot">
+      ${S.filterCats.length?`<button class="bigcat-btn sub" id="pkClear">クリア</button>`:""}
+      <button class="bigcat-btn" id="pkClose">完了</button>
+    </div>`;
+  el("modalRoot").innerHTML=`<div class="bigcat-overlay" id="bigcatBg"><div class="bigcat-panel">${body()}</div></div>`;
   const rebind=()=>{
-    el("modalRoot").querySelectorAll(".catchip").forEach(b=>b.onclick=()=>{
+    el("modalRoot").querySelectorAll(".bigcat-chip").forEach(b=>b.onclick=()=>{
       const c=b.dataset.cat; const i=S.filterCats.indexOf(c);
       if(i>=0) S.filterCats.splice(i,1); else S.filterCats.push(c);
-      el("modalRoot").querySelector(".modal").innerHTML=body(); rebind(); onChange();
+      el("modalRoot").querySelector(".bigcat-panel").innerHTML=body(); rebind(); onChange();
     });
-    if(el("pkClear")) el("pkClear").onclick=()=>{S.filterCats=[];el("modalRoot").querySelector(".modal").innerHTML=body();rebind();onChange();};
+    if(el("pkClear")) el("pkClear").onclick=()=>{S.filterCats=[];el("modalRoot").querySelector(".bigcat-panel").innerHTML=body();rebind();onChange();};
     if(el("pkClose")) el("pkClose").onclick=closeModal;
   };
   rebind();
@@ -2253,6 +2301,7 @@ el("fab").onclick=openManualAdd;
   await migrate5();
   await migrate6();
   await migrate7();
+  await migrate8();
   renderTab();
   if("serviceWorker" in navigator){
     try{ navigator.serviceWorker.register("./sw.js"); }catch(e){}
