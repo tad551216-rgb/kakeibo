@@ -50,6 +50,10 @@ main{padding:0 14px 24px;max-width:680px;margin:0 auto;}
 .sumcell{flex:1;text-align:center}
 .sumcell .t{font-size:12px;color:var(--muted);margin-bottom:2px}
 .sumcell .v{font-size:17px;font-weight:700;font-variant-numeric:tabular-nums}
+.docitem{padding:8px 0;border-bottom:1px solid var(--line);}
+.docitem:last-child{border-bottom:none;}
+.docname{font-size:13px;line-height:1.45;word-break:break-all;margin-bottom:6px;}
+.docbtns{display:flex;gap:8px;}
 /* 収支サマリ */
 .balrow{display:flex;gap:10px;}
 .balrow .cell{flex:1;text-align:center;border-radius:10px;padding:4px 0;cursor:pointer;border:1px solid transparent;}
@@ -2089,16 +2093,18 @@ async function renderTax(){
     el("docList").innerHTML=Object.entries(byType).map(([type,list])=>`
       <div style="margin-bottom:10px">
         <div style="font-size:12px;font-weight:700;color:var(--muted);margin-bottom:4px">${esc(type)}</div>
-        ${list.map(d=>`<div class="rulerow" style="align-items:center">
-          <span style="flex:1;min-width:0;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(d.name)}</span>
-          <button class="btn sub small docView" data-did="${d.did}" style="padding:4px 10px;font-size:12px;width:auto">開く</button>
-          <button class="btn sub small docDel" data-did="${d.did}" style="padding:4px 10px;font-size:12px;width:auto;color:var(--expense)">削除</button>
+        ${list.map(d=>`<div class="docitem">
+          <div class="docname">${esc(d.name)}</div>
+          <div class="docbtns">
+            <button class="btn sub small docView" data-did="${d.did}" style="padding:4px 14px;font-size:12px;width:auto">開く</button>
+            <button class="btn sub small docDel" data-did="${d.did}" style="padding:4px 14px;font-size:12px;width:auto;color:var(--expense)">削除</button>
+          </div>
         </div>`).join("")}
       </div>`).join("");
     el("docList").querySelectorAll(".docView").forEach(b=>b.onclick=async()=>{
       const d=await tget("docs",Number(b.dataset.did)); if(!d)return;
-      const url=URL.createObjectURL(d.blob); window.open(url,"_blank");
-      setTimeout(()=>URL.revokeObjectURL(url),60000);
+      const blob=d.blob instanceof Blob ? d.blob : new Blob([d.blob],{type:d.mime||"application/pdf"});
+      openDocViewer(blob,d.name||"document",d.mime||blob.type||"");
     });
     el("docList").querySelectorAll(".docDel").forEach(b=>b.onclick=async()=>{
       const d=await tget("docs",Number(b.dataset.did)); if(!d)return;
@@ -2115,7 +2121,7 @@ async function renderTax(){
     const typeIdx=prompt("書類の種類を選んでください(番号):\n"+DOC_TYPES.map((t,i)=>`${i+1}. ${t}`).join("\n"),"1");
     if(typeIdx===null)return;
     const type=DOC_TYPES[Number(typeIdx)-1]||"その他";
-    await tput("docs",{year:y,type,name:f.name,blob:f,added:Date.now()});
+    await tput("docs",{year:y,type,name:f.name,blob:f,mime:f.type||"application/pdf",added:Date.now()});
     drawDocs();
   };
   draw();
@@ -2128,7 +2134,35 @@ function showModal(html){
   el("modalRoot").innerHTML=`<div class="modalbg" id="mbg"><div class="modal">${html}</div></div>`;
   el("mbg").onclick=e=>{if(e.target.id==="mbg")closeModal();};
 }
-function closeModal(){el("modalRoot").innerHTML="";}
+function closeModal(){
+  // ビューア用のObjectURLがあれば解放
+  if(window.__docURL){URL.revokeObjectURL(window.__docURL);window.__docURL=null;}
+  el("modalRoot").innerHTML="";
+}
+function openDocViewer(blob,name,mime){
+  const url=URL.createObjectURL(blob);
+  window.__docURL=url;
+  const isImg=/^image\//.test(mime)||/\.(png|jpe?g|gif|webp|heic)$/i.test(name);
+  const body = isImg
+    ? `<img src="${url}" style="width:100%;height:auto;border-radius:8px;display:block">`
+    : `<iframe src="${url}" style="width:100%;height:70vh;border:none;border-radius:8px;background:#fff"></iframe>`;
+  el("modalRoot").innerHTML=`<div class="modalbg" id="mbg"><div class="modal" style="max-width:760px;width:94%">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+      <span style="flex:1;min-width:0;font-size:14px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(name)}</span>
+      <button class="btn sub small" id="docDl" style="padding:4px 12px;font-size:12px;width:auto">保存・共有</button>
+      <button class="btn sub small" id="docClose" style="padding:4px 12px;font-size:12px;width:auto">閉じる</button>
+    </div>
+    ${body}
+    <p class="note" style="margin:8px 0 0">表示されない場合は「保存・共有」からファイルアプリに保存して開いてください。</p>
+  </div></div>`;
+  el("mbg").onclick=e=>{if(e.target.id==="mbg")closeModal();};
+  el("docClose").onclick=closeModal;
+  el("docDl").onclick=()=>{
+    const a=document.createElement("a");
+    a.href=url; a.download=name;
+    document.body.appendChild(a); a.click(); a.remove();
+  };
+}
 function renderTab(){
   document.querySelectorAll("nav.tabbar button").forEach(b=>
     b.classList.toggle("on",b.dataset.tab===S.tab));
