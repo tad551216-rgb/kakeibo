@@ -17,9 +17,9 @@
   --radius:14px;
   --basefs:16px;
 }
-/* 文字サイズ(老眼対策): 標準16 / 大19.5 / 特大24 */
-body.fs-large{--basefs:19.5px;}
-body.fs-xlarge{--basefs:24px;}
+/* 文字サイズ(老眼対策): 標準16 / 大21 / 特大26.5 */
+body.fs-large{--basefs:21px;}
+body.fs-xlarge{--basefs:26.5px;}
 *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
 html,body{margin:0;padding:0;background:var(--bg);color:var(--ink);
   font-family:-apple-system,"Hiragino Sans","Hiragino Kaku Gothic ProN","Noto Sans JP",sans-serif;
@@ -118,18 +118,18 @@ canvas{display:block;width:100%;}
 .catsec-title{font-size:0.75rem;font-weight:700;color:var(--muted);margin:12px 0 6px;}
 .bigcat-overlay{position:fixed;inset:0;background:var(--bg);z-index:40;display:flex;flex-direction:column;}
 .bigcat-panel{display:flex;flex-direction:column;height:100%;width:100%;max-width:760px;margin:0 auto;}
-.bigcat-head{padding:calc(18px + env(safe-area-inset-top)) 22px 14px;border-bottom:1px solid var(--line);background:var(--surface);}
-.bigcat-title{font-size:1.5rem;font-weight:800;color:var(--ink);}
-.bigcat-body{flex:1;overflow:auto;padding:8px 18px 18px;}
-.bigcat-sec{font-size:1.125rem;font-weight:800;color:var(--muted);margin:22px 4px 12px;}
-.bigcat-sec:first-child{margin-top:14px;}
-.bigcat-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
-.bigcat-chip{display:flex;align-items:center;gap:12px;padding:18px 16px;border:2px solid var(--line);border-radius:16px;background:var(--surface);font:inherit;font-size:1.125rem;font-weight:700;color:var(--ink);text-align:left;line-height:1.2;}
+.bigcat-head{padding:calc(14px + env(safe-area-inset-top)) 20px 10px;border-bottom:1px solid var(--line);background:var(--surface);}
+.bigcat-title{font-size:1.25rem;font-weight:800;color:var(--ink);}
+.bigcat-body{flex:1;overflow:auto;padding:6px 16px 14px;}
+.bigcat-sec{font-size:0.9rem;font-weight:800;color:var(--muted);margin:14px 4px 8px;}
+.bigcat-sec:first-child{margin-top:8px;}
+.bigcat-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;}
+.bigcat-chip{display:flex;align-items:center;gap:7px;padding:11px 9px;border:2px solid var(--line);border-radius:12px;background:var(--surface);font:inherit;font-size:0.85rem;font-weight:700;color:var(--ink);text-align:left;line-height:1.15;}
 .bigcat-chip.on{box-shadow:0 2px 8px rgba(0,0,0,.18);}
-.bigcat-dot{width:18px;height:18px;border-radius:50%;flex:none;}
+.bigcat-dot{width:13px;height:13px;border-radius:50%;flex:none;}
 .bigcat-chip.on .bigcat-dot{background:#fff !important;}
-.bigcat-foot{display:flex;gap:12px;padding:14px 18px calc(16px + env(safe-area-inset-bottom));border-top:1px solid var(--line);background:var(--surface);}
-.bigcat-btn{flex:1;padding:18px;border:none;border-radius:14px;background:var(--ink);color:#fff;font:inherit;font-size:1.1875rem;font-weight:800;}
+.bigcat-foot{display:flex;gap:10px;padding:12px 16px calc(14px + env(safe-area-inset-bottom));border-top:1px solid var(--line);background:var(--surface);}
+.bigcat-btn{flex:1;padding:15px;border:none;border-radius:13px;background:var(--ink);color:#fff;font:inherit;font-size:1.05rem;font-weight:800;}
 .bigcat-btn.sub{background:var(--surface);color:var(--ink);border:2px solid var(--line);}
 .catsec-title:first-child{margin-top:0;}
 select,input[type=text],input[type=date],input[type=number]{
@@ -1144,10 +1144,10 @@ function drawDonut(canvas, items, centerLabel, centerValue){
   }
   const fs=parseFloat(getComputedStyle(document.body).getPropertyValue("--basefs"))||16;
   const k=fs/16;
-  ctx.fillStyle="#8A8F98";ctx.font=`${11*k}px -apple-system,'Hiragino Sans'`;
-  ctx.textAlign="center";ctx.fillText(centerLabel,cx,cy-12);
-  ctx.fillStyle="#1B2A4A";ctx.font=`700 ${21*k}px -apple-system,'Hiragino Sans'`;
-  ctx.fillText(centerValue,cx,cy+12);
+  ctx.fillStyle="#8A8F98";ctx.font=`${10*k}px -apple-system,'Hiragino Sans'`;
+  ctx.textAlign="center";ctx.fillText(centerLabel,cx,cy-9);
+  ctx.fillStyle="#1B2A4A";ctx.font=`700 ${17*k}px -apple-system,'Hiragino Sans'`;
+  ctx.fillText(centerValue,cx,cy+13);
 }
 function drawBars(canvas, labels, incs, exps){
   const dpr=window.devicePixelRatio||1;
