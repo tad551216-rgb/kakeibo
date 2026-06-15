@@ -1451,8 +1451,9 @@ async function openEdit(id){
     <div class="checkrow"><input type="checkbox" id="eRule">
       <span>「<b>${esc(tx.counterparty)}</b>」を含む取引を今後このカテゴリに自動分類する</span></div>
     <button class="btn" id="eSave">保存する</button>
-    <div style="height:8px"></div>
-    <button class="btn danger" id="eDel">この明細を削除</button>
+    ${(tx.source==="manual"||!tx.source)?`<div style="height:8px"></div>
+    <button class="btn danger" id="eDel">この明細を削除</button>`
+    :`<p class="note" style="margin:10px 0 0">この明細はCSV取込データのため削除できません(カテゴリ・税タグは変更できます)。誤って取り込んだ場合は、正しいCSVを取り込み直すと最新の状態に更新されます。</p>`}
   `);
   let tax=tx.taxTag||"";
   el("eTax").querySelectorAll(".chip").forEach(c=>c.onclick=()=>{
@@ -1470,7 +1471,7 @@ async function openEdit(id){
     }
     closeModal(); renderTab();
   };
-  el("eDel").onclick=async()=>{
+  if(el("eDel")) el("eDel").onclick=async()=>{
     if(confirm("この明細を削除します。よろしいですか?")){
       await tdel("tx",id); closeModal(); renderTab();
     }
