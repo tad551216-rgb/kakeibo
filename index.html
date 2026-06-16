@@ -441,8 +441,10 @@ function openDB(){
   });
 }
 function tput(store,obj){return new Promise((res,rej)=>{
-  const t=db.transaction(store,"readwrite");t.objectStore(store).put(obj);
-  t.oncomplete=res;t.onerror=rej;});}
+  const t=db.transaction(store,"readwrite");
+  const rq=t.objectStore(store).put(obj);
+  let key; rq.onsuccess=()=>{key=rq.result;};
+  t.oncomplete=()=>res(key);t.onerror=rej;});}
 function tdel(store,key){return new Promise((res,rej)=>{
   const t=db.transaction(store,"readwrite");t.objectStore(store).delete(key);
   t.oncomplete=res;t.onerror=rej;});}
@@ -1880,10 +1882,29 @@ async function renderSettings(){
     try{
       const data=JSON.parse(await f.text());
       let n=0;
+      // 口座: 名前で既存と突き合わせ、重複を防ぐ。旧aid→新aidの対応表を作る
+      const existAcc=await tall("accounts");
+      const byName={}; for(const a of existAcc) byName[a.name]=a;
+      const aidMap={}; // backup上のaid → 実際のaid
+      for(const a of (data.accounts||[])){
+        const oldAid=a.aid;
+        if(byName[a.name]){
+          aidMap[oldAid]=byName[a.name].aid; // 既存口座を使う
+        }else{
+          const rec={name:a.name,kind:a.kind};
+          const newAid=await tput("accounts",rec); // autoIncrementで採番
+          byName[a.name]={...rec,aid:newAid};
+          aidMap[oldAid]=newAid;
+        }
+      }
       for(const t of (data.tx||[])){await tput("tx",t);n++;}
       for(const r of (data.rules||[])){delete r.rid;await tput("rules",r);}
-      for(const a of (data.accounts||[])){await tput("accounts",a);} // aidは残高との紐付けのため保持
-      for(const b of (data.bal||[])){await tput("bal",b);}
+      // 残高: balのaidを新aidに付け替え、bidも振り直す
+      for(const b of (data.bal||[])){
+        const newAid=aidMap[b.aid]!=null?aidMap[b.aid]:b.aid;
+        const rec={...b,aid:newAid,bid:`${b.month}:${newAid}`};
+        await tput("bal",rec);
+      }
       await loadRules();
       alert(`バックアップから ${n}件の明細を読み込みました`);
       renderTab();
