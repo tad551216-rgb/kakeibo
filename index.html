@@ -55,6 +55,9 @@ main{padding:0 14px 24px;max-width:680px;margin:0 auto;}
 .fsbtn:nth-child(2){font-size:1.15rem;}
 .fsbtn:nth-child(3){font-size:1.4rem;}
 .fsbtn.on{background:var(--ink);color:#fff;border-color:var(--ink);}
+.catmrow{display:flex;align-items:center;gap:10px;padding:11px 4px;border-bottom:1px solid var(--line);}
+.catmrow:last-child{border-bottom:none;}
+.ceColor{padding:0;cursor:pointer;}
 .sumcard{padding:14px}
 .sumrow{display:flex;gap:8px}
 .sumcell{flex:1;text-align:center}
@@ -213,7 +216,7 @@ h2.sec{font-size:0.875rem;margin:18px 4px 8px;color:var(--ink);}
    ============================================================ */
 
 /* ---------- カテゴリ定義 ---------- */
-const CATS = [
+const DEFAULT_CATS = [
   // 支出
   {name:"食費",        type:"expense", color:"#D08C3C"},
   {name:"外食",        type:"expense", color:"#BF4E3C"},
@@ -238,7 +241,39 @@ const CATS = [
   // 振替
   {name:"振替(対象外)", type:"transfer", color:"#B8BCC2"},
 ];
-const CAT = Object.fromEntries(CATS.map(c=>[c.name,c]));
+// CATS / CAT は既定 + ユーザー編集(meta "catCustom")を合成して構築
+let CATS = DEFAULT_CATS.map(c=>({...c}));
+let CAT = Object.fromEntries(CATS.map(c=>[c.name,c]));
+function buildCats(custom){
+  // custom: { colors:{name:hex}, names:{defaultName:newName}, adds:[{name,type,color}] }
+  custom = custom||{};
+  const colors=custom.colors||{}, names=custom.names||{}, adds=custom.adds||[];
+  const base=DEFAULT_CATS.map(c=>{
+    const o={...c};
+    if(names[c.name]) o.name=names[c.name];   // 名前変更(税タグ等は維持)
+    if(colors[o.name]||colors[c.name]) o.color=colors[o.name]||colors[c.name];
+    return o;
+  });
+  // 追加カテゴリ(色変更も colors で反映)
+  for(const a of adds){
+    const o={...a};
+    if(colors[o.name]) o.color=colors[o.name];
+    base.push(o);
+  }
+  CATS=base;
+  CAT=Object.fromEntries(CATS.map(c=>[c.name,c]));
+}
+async function loadCatCustom(){
+  try{ const r=await tget("meta","catCustom"); buildCats(r&&r.v); }
+  catch(e){ buildCats(null); }
+}
+async function saveCatCustom(custom){
+  await tput("meta",{k:"catCustom",v:custom});
+  buildCats(custom);
+}
+async function getCatCustom(){
+  const r=await tget("meta","catCustom"); return (r&&r.v)||{colors:{},names:{},adds:[]};
+}
 
 /* ---------- 初期ルール(キーワード → カテゴリ) ---------- */
 const SEED_RULES = [
@@ -1627,6 +1662,104 @@ async function renderImport(){
 }
 
 /* ---------- 設定 ---------- */
+// ===== カテゴリ管理 =====
+function drawCatManage(){
+  if(!el("catManageList")) return;
+  const groups={expense:[],income:[],transfer:[]};
+  for(const c of CATS){ (groups[c.type]||groups.expense).push(c); }
+  const sec=(title,list)=> list.length?`
+    <div style="font-size:0.8rem;font-weight:700;color:var(--muted);margin:10px 2px 6px">${title}</div>
+    ${list.map(c=>`<div class="catmrow" data-name="${esc(c.name)}">
+      <span class="dot" style="background:${c.color};width:16px;height:16px;border-radius:50%"></span>
+      <span style="flex:1;font-size:0.95rem">${esc(c.name)}</span>
+      ${c.taxTag?`<span class="srcbadge">税:${esc(c.taxTag)}</span>`:""}
+      <span style="color:var(--muted);font-size:0.85rem">編集 ›</span>
+    </div>`).join("")}`:"";
+  el("catManageList").innerHTML = sec("支出",groups.expense)+sec("収入",groups.income)+sec("その他",groups.transfer);
+  el("catManageList").querySelectorAll(".catmrow").forEach(r=>r.onclick=()=>openCatEditor(r.dataset.name));
+}
+
+// 編集(name=null で新規追加)
+function openCatEditor(name){
+  const existing = name?CAT[name]:null;
+  const PALETTE=["#D08C3C","#BF4E3C","#A98F5F","#4E7AA6","#3E8E9E","#6B5B95","#7A6A4F","#5E8C61","#C97FA4","#8E6FB8","#556070","#B89B2E","#3C7A55","#8A8F98","#7B8794","#9AA0A6","#2E7D5B","#3C8C73","#6FA287","#B8BCC2","#C2603A","#2F6E8F","#9C5BA0","#4A7C4E"];
+  const curColor = existing? existing.color : PALETTE[0];
+  const curType = existing? existing.type : "expense";
+  const body=()=>`
+    <h3>${name?"カテゴリの編集":"カテゴリの追加"}</h3>
+    <div class="frow"><label>名前</label>
+      <input type="text" class="txin" id="ceName" value="${name?esc(name):""}" placeholder="例: ペット費" maxlength="12"></div>
+    ${name?"":`<div class="frow"><label>区分</label>
+      <select id="ceType">
+        <option value="expense">支出</option>
+        <option value="income">収入</option>
+      </select></div>`}
+    <div class="frow"><label>色</label>
+      <div id="cePalette" style="display:flex;flex-wrap:wrap;gap:8px">
+        ${PALETTE.map(col=>`<button class="ceColor" data-col="${col}" style="width:34px;height:34px;border-radius:50%;background:${col};border:3px solid ${col===curColor?'var(--ink)':'transparent'}"></button>`).join("")}
+      </div></div>
+    ${existing&&existing.taxTag?`<p class="note">このカテゴリは確定申告の「${esc(existing.taxTag)}」集計に使われます。名前は変えても集計対象のままです。</p>`:""}
+    <button class="btn" id="ceSave" style="margin-top:6px">保存する</button>
+  `;
+  showModal(body());
+  let selColor=curColor;
+  const bindColors=()=>{
+    el("modalRoot").querySelectorAll(".ceColor").forEach(b=>b.onclick=()=>{
+      selColor=b.dataset.col;
+      el("modalRoot").querySelectorAll(".ceColor").forEach(x=>x.style.border="3px solid transparent");
+      b.style.border="3px solid var(--ink)";
+    });
+  };
+  bindColors();
+  el("ceSave").onclick=async()=>{
+    const newName=el("ceName").value.trim();
+    if(!newName){ alert("名前を入力してください"); return; }
+    const custom=await getCatCustom();
+    custom.colors=custom.colors||{}; custom.names=custom.names||{}; custom.adds=custom.adds||[];
+    if(!name){
+      // 新規追加
+      if(CAT[newName]){ alert("同じ名前のカテゴリが既にあります"); return; }
+      const type=el("ceType").value;
+      custom.adds.push({name:newName,type,color:selColor});
+      await saveCatCustom(custom);
+      closeModal(); renderTab();
+      return;
+    }
+    // 既存の編集: 色
+    custom.colors[newName]=selColor;
+    // 名前変更
+    if(newName!==name){
+      if(CAT[newName]){ alert("同じ名前のカテゴリが既にあります"); return; }
+      // 既定カテゴリか追加カテゴリかで保存先が異なる
+      const addIdx=custom.adds.findIndex(a=>a.name===name);
+      if(addIdx>=0){
+        custom.adds[addIdx].name=newName;
+        if(custom.colors[name]){ custom.colors[newName]=custom.colors[name]; delete custom.colors[name]; }
+        custom.colors[newName]=selColor;
+      }else{
+        // 既定カテゴリの名前変更: names に 元の既定名→新名 を記録
+        // 既に変更済みの場合は元の既定名を辿る
+        let defName=name;
+        for(const [d,n] of Object.entries(custom.names)){ if(n===name){ defName=d; break; } }
+        custom.names[defName]=newName;
+        if(custom.colors[name]){ delete custom.colors[name]; }
+        custom.colors[newName]=selColor;
+      }
+      // 既存取引のカテゴリ名を一括置換
+      for(const t of await tall("tx")){
+        if(t.category===name){ t.category=newName; await tput("tx",t); }
+      }
+      // 自動分類ルールのカテゴリ参照も置換
+      for(const r of await tall("rules")){
+        if(r.cat===name){ r.cat=newName; await tput("rules",r); }
+      }
+      await loadRules();
+    }
+    await saveCatCustom(custom);
+    closeModal(); renderTab();
+  };
+}
+
 async function renderSettings(){
   await loadRules();
   const txs=await tall("tx");
@@ -1640,6 +1773,12 @@ async function renderSettings(){
       <button class="fsbtn" data-fs="xlarge">特大</button>
     </div>
     <p class="note" style="margin-bottom:0">プレビュー: <span style="font-weight:700">¥193,276 / 外食 ¥72,902</span></p>
+  </div>
+  <div class="card">
+    <h2>カテゴリの管理</h2>
+    <p class="note" style="margin-top:0">名前・色の変更と、新しいカテゴリの追加ができます。タップして編集してください。</p>
+    <div id="catManageList"></div>
+    <button class="btn sub" id="catAddBtn" style="margin-top:8px">＋ カテゴリを追加</button>
   </div>
   <div class="card">
     <h2>自動分類ルール(${rulesCache.length}件)</h2>
@@ -1683,6 +1822,9 @@ async function renderSettings(){
     if(b.dataset.fs===curFs) b.classList.add("on");
     b.onclick=()=>applyFontSize(b.dataset.fs); // applyFontSizeがrenderTabを呼び再描画
   });
+  // カテゴリ管理
+  drawCatManage();
+  if(el("catAddBtn")) el("catAddBtn").onclick=()=>openCatEditor(null);
   el("rAdd").onclick=async()=>{
     const kw=el("rKw").value.trim(); if(!kw)return;
     await tput("rules",{kw,cat:el("rCat").value});
@@ -2332,6 +2474,7 @@ el("fab").onclick=openManualAdd;
 (async()=>{
   applyFontSize(localStorage.getItem("fontSize")||"normal");
   await openDB();
+  await loadCatCustom();
   await seedIfNeeded();
   await loadRules();
   await migrate();
