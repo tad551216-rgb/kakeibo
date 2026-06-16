@@ -1117,35 +1117,47 @@ async function exportIryouhi(year,txs){
   if(!meds.length){ if(note)note.textContent="この年に税タグ「医療費」の取引がありません。明細から医療費に税タグを付けてください。"; return; }
   try{
     if(btn){btn.disabled=true;btn.textContent="出力の準備中…";}
-    // SheetJSとテンプレートを遅延読み込み(同じフォルダに配置)
-    await loadScriptOnce("xlsx.mini.min.js","XLSX");
+    // テンプレート(Base64)とJSZipを遅延読み込み
+    await loadScriptOnce("jszip.min.js","JSZip");
     await loadScriptOnce("template_iryouhi.b64.js","IRYOUHI_TEMPLATE_B64");
-    const XLSX=window.XLSX;
+    const JSZip=window.JSZip;
     const b64=window.IRYOUHI_TEMPLATE_B64;
-    // Base64→バイナリ
     const bin=atob(b64); const buf=new Uint8Array(bin.length);
     for(let i=0;i<bin.length;i++) buf[i]=bin.charCodeAt(i);
-    const wb=XLSX.read(buf,{type:"array"});
-    const ws=wb.Sheets["医療費集計フォーム"];
+    // xlsx(zip)を展開し、ワークシートXMLに値だけを差し込む(書式・列幅・罫線はテンプレートのまま保持)
+    const zip=await JSZip.loadAsync(buf);
+    let xml=await zip.file("xl/worksheets/sheet1.xml").async("string");
+    const esc=s=>String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
     const KCOL={"診療・治療":"D","医薬品購入":"E","介護保険サービス":"F","その他の医療費":"G"};
-    const setC=(addr,v,t)=>{ ws[addr]={t:t||(typeof v==="number"?"n":"s"),v}; };
+    // 既存セル <c r="addr" .../> に値を差し込む(テンプレートのスタイル属性 s="N" は維持)
+    const setStr=(addr,text)=>{
+      const re=new RegExp('<c r="'+addr+'"([^>]*?)/>');
+      xml=xml.replace(re,(m,attrs)=>{
+        attrs=attrs.replace(/\s+t="[^"]*"/,""); // 既存t属性を除去
+        return `<c r="${addr}"${attrs} t="inlineStr"><is><t xml:space="preserve">${esc(text)}</t></is></c>`;
+      });
+    };
+    const setNum=(addr,num)=>{
+      const re=new RegExp('<c r="'+addr+'"([^>]*?)/>');
+      xml=xml.replace(re,(m,attrs)=>{
+        attrs=attrs.replace(/\s+t="[^"]*"/,"");
+        return `<c r="${addr}"${attrs}><v>${num}</v></c>`;
+      });
+    };
     let row=9;
     for(const t of meds){
-      setC("B"+row,"本人");
-      setC("C"+row,(t.counterparty||"").slice(0,20));
-      setC(KCOL[iryouhiKubun(t.counterparty)]+row,"該当する");
-      setC("H"+row,t.amount,"n");
-      setC("J"+row,t.date.replace(/-/g,"/"));
+      setStr("B"+row,"本人");
+      setStr("C"+row,(t.counterparty||"").slice(0,20));
+      setStr(KCOL[iryouhiKubun(t.counterparty)]+row,"該当する");
+      setNum("H"+row,t.amount);
+      setStr("J"+row,t.date.replace(/-/g,"/"));
       row++;
     }
-    // 書き込んだ範囲に合わせてシート範囲を拡張
-    const ref=ws["!ref"]||"A1:M1004";
-    const range=XLSX.utils.decode_range(ref);
-    if(range.e.r<row-1) range.e.r=row-1;
-    ws["!ref"]=XLSX.utils.encode_range(range);
-    const out=XLSX.write(wb,{bookType:"xlsx",type:"array"});
-    const blob=new Blob([out],{type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"});
-    const url=URL.createObjectURL(blob);
+    zip.file("xl/worksheets/sheet1.xml",xml);
+    // calcChain.xmlは数式依存関係のキャッシュ。値差し込みで不整合が出ないよう削除(Excelが再生成)
+    if(zip.file("xl/calcChain.xml")) zip.remove("xl/calcChain.xml");
+    const out=await zip.generateAsync({type:"blob",mimeType:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"});
+    const url=URL.createObjectURL(out);
     const a=document.createElement("a");
     a.href=url; a.download=`医療費集計フォーム_${year}.xlsx`;
     document.body.appendChild(a); a.click(); a.remove();
