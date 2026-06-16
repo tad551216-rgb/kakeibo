@@ -58,6 +58,10 @@ main{padding:0 14px 24px;max-width:680px;margin:0 auto;}
 .catmrow{display:flex;align-items:center;gap:10px;padding:11px 4px;border-bottom:1px solid var(--line);}
 .catmrow:last-child{border-bottom:none;}
 .ceColor{padding:0;cursor:pointer;}
+.acc-head{width:100%;display:flex;align-items:center;gap:10px;padding:4px 0;border:none;background:transparent;font:inherit;text-align:left;}
+.acc-head .acc-chev{color:var(--muted);font-size:0.85rem;width:14px;}
+.acc-head .acc-title{font-size:0.8125rem;color:var(--muted);font-weight:600;letter-spacing:.06em;}
+.acc-head.open .acc-title{color:var(--ink);}
 .sumcard{padding:14px}
 .sumrow{display:flex;gap:8px}
 .sumcell{flex:1;text-align:center}
@@ -1205,7 +1209,7 @@ function drawBars(canvas, labels, incs, exps){
 }
 
 /* ---------- 画面状態 ---------- */
-const S = { tab:"home", month:"", homeMode:"expense", homePeriod:"month", periodYear:"", rangeFrom:"", rangeTo:"", listPeriod:"month", listMonth:"", listYear:"", listFrom:"", listTo:"", filterCats:[], filterMonth:"", assetMonth:"", taxYear:0, docOpenType:"" };
+const S = { tab:"home", month:"", homeMode:"expense", homePeriod:"month", periodYear:"", rangeFrom:"", rangeTo:"", listPeriod:"month", listMonth:"", listYear:"", listFrom:"", listTo:"", filterCats:[], filterMonth:"", assetMonth:"", taxYear:0, docOpenType:"", openCatMgmt:false, openRules:false };
 
 function latestMonth(txs){
   if(!txs.length){const d=new Date();return d.toISOString().slice(0,7);}
@@ -1775,20 +1779,30 @@ async function renderSettings(){
     <p class="note" style="margin-bottom:0">プレビュー: <span style="font-weight:700">¥193,276 / 外食 ¥72,902</span></p>
   </div>
   <div class="card">
-    <h2>カテゴリの管理</h2>
-    <p class="note" style="margin-top:0">名前・色の変更と、新しいカテゴリの追加ができます。タップして編集してください。</p>
-    <div id="catManageList"></div>
-    <button class="btn sub" id="catAddBtn" style="margin-top:8px">＋ カテゴリを追加</button>
+    <button class="acc-head ${S.openCatMgmt?'open':''}" id="catMgmtToggle">
+      <span class="acc-chev">${S.openCatMgmt?'▾':'▸'}</span>
+      <span class="acc-title">カテゴリの管理</span>
+    </button>
+    ${S.openCatMgmt?`<div style="margin-top:12px">
+      <p class="note" style="margin-top:0">名前・色の変更と、新しいカテゴリの追加ができます。タップして編集してください。</p>
+      <div id="catManageList"></div>
+      <button class="btn sub" id="catAddBtn" style="margin-top:8px">＋ カテゴリを追加</button>
+    </div>`:""}
   </div>
   <div class="card">
-    <h2>自動分類ルール(${rulesCache.length}件)</h2>
-    <p class="note" style="margin-top:0">取引先や摘要に含まれる文字で自動分類します。上から順に判定されます。</p>
-    <div class="frow" style="display:flex;gap:8px;margin-top:10px">
-      <input type="text" id="rKw" placeholder="キーワード(例: ○○薬局)" style="flex:1">
-      <select id="rCat">${CATS.map(c=>`<option>${c.name}</option>`).join("")}</select>
-    </div>
-    <button class="btn sub" id="rAdd">ルールを追加</button>
-    <div id="ruleList" style="margin-top:8px"></div>
+    <button class="acc-head ${S.openRules?'open':''}" id="rulesToggle">
+      <span class="acc-chev">${S.openRules?'▾':'▸'}</span>
+      <span class="acc-title">自動分類ルール(${rulesCache.length}件)</span>
+    </button>
+    ${S.openRules?`<div style="margin-top:12px">
+      <p class="note" style="margin-top:0">取引先や摘要に含まれる文字で自動分類します。上から順に判定されます。</p>
+      <div class="frow" style="display:flex;gap:8px;margin-top:10px">
+        <input type="text" id="rKw" placeholder="キーワード(例: ○○薬局)" style="flex:1">
+        <select id="rCat">${CATS.map(c=>`<option>${c.name}</option>`).join("")}</select>
+      </div>
+      <button class="btn sub" id="rAdd">ルールを追加</button>
+      <div id="ruleList" style="margin-top:8px"></div>
+    </div>`:""}
   </div>
   <div class="card">
     <h2>データ管理</h2>
@@ -1807,6 +1821,7 @@ async function renderSettings(){
     取込(PayPay・三井住友銀行CSV)/自動分類/月次ダッシュボード/医療費メモ。<br>
     Phase 2で控除証明書XML取込と税計算、Phase 3でふるさと納税シミュレーションと医療費集計フォーム(Excel)出力を予定。</p></div>`;
   const drawRules=()=>{
+    if(!el("ruleList")) return;
     el("ruleList").innerHTML=rulesCache.map(r=>`
       <div class="rulerow"><span class="kw">${esc(r.kw)}</span>
       <span class="to">→ ${esc(r.cat)}</span>
@@ -1815,21 +1830,29 @@ async function renderSettings(){
       await tdel("rules",Number(b.dataset.rid));
       await loadRules();drawRules();});
   };
-  drawRules();
   // 文字サイズ切替
   const curFs=localStorage.getItem("fontSize")||"normal";
   el("view").querySelectorAll(".fsbtn").forEach(b=>{
     if(b.dataset.fs===curFs) b.classList.add("on");
     b.onclick=()=>applyFontSize(b.dataset.fs); // applyFontSizeがrenderTabを呼び再描画
   });
-  // カテゴリ管理
-  drawCatManage();
-  if(el("catAddBtn")) el("catAddBtn").onclick=()=>openCatEditor(null);
-  el("rAdd").onclick=async()=>{
-    const kw=el("rKw").value.trim(); if(!kw)return;
-    await tput("rules",{kw,cat:el("rCat").value});
-    el("rKw").value=""; await loadRules(); drawRules();
-  };
+  // 開閉トグル
+  el("catMgmtToggle").onclick=()=>{S.openCatMgmt=!S.openCatMgmt;renderSettings();};
+  el("rulesToggle").onclick=()=>{S.openRules=!S.openRules;renderSettings();};
+  // カテゴリ管理(開いているときだけ)
+  if(S.openCatMgmt){
+    drawCatManage();
+    if(el("catAddBtn")) el("catAddBtn").onclick=()=>openCatEditor(null);
+  }
+  // 自動分類ルール(開いているときだけ)
+  if(S.openRules){
+    drawRules();
+    if(el("rAdd")) el("rAdd").onclick=async()=>{
+      const kw=el("rKw").value.trim(); if(!kw)return;
+      await tput("rules",{kw,cat:el("rCat").value});
+      el("rKw").value=""; await loadRules(); drawRules();
+    };
+  }
   el("reapply").onclick=async()=>{
     await loadRules();
     let n=0;
