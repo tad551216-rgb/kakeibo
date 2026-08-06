@@ -17,9 +17,6 @@
   --radius:14px;
   --basefs:16px;
 }
-/* 文字サイズ(老眼対策): 標準16 / 大21 / 特大26.5 */
-body.fs-large{--basefs:21px;}
-body.fs-xlarge{--basefs:26.5px;}
 *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
 html,body{margin:0;padding:0;background:var(--bg);color:var(--ink);
   font-family:-apple-system,"Hiragino Sans","Hiragino Kaku Gothic ProN","Noto Sans JP",sans-serif;
@@ -31,7 +28,7 @@ header.app{position:sticky;top:0;z-index:10;background:var(--bg);
   display:flex;align-items:baseline;justify-content:space-between;}
 header.app h1{font-size:1.0625rem;margin:0;font-weight:700;letter-spacing:.04em;}
 header.app .sub{font-size:0.75rem;color:var(--muted);}
-main{padding:0 14px 24px;max-width:680px;margin:0 auto;}
+main{padding:0 14px 24px;max-width:var(--tt-maxw, 680px);margin:0 auto;}
 .card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);
   padding:14px 16px;margin-bottom:12px;}
 .card h2{font-size:0.8125rem;color:var(--muted);font-weight:600;margin:0 0 8px;letter-spacing:.06em;}
@@ -50,11 +47,6 @@ main{padding:0 14px 24px;max-width:680px;margin:0 auto;}
 .seg.on{background:var(--surface);color:var(--ink);box-shadow:0 1px 3px rgba(0,0,0,.08);}
 .rangesel{font-size:0.9375rem !important;min-width:118px;}
 .fssel{display:flex;gap:8px;margin:10px 0;}
-.fsbtn{flex:1;padding:14px 0;border:2px solid var(--line);border-radius:12px;background:var(--surface);font:inherit;font-weight:700;color:var(--ink);}
-.fsbtn:nth-child(1){font-size:0.9rem;}
-.fsbtn:nth-child(2){font-size:1.15rem;}
-.fsbtn:nth-child(3){font-size:1.4rem;}
-.fsbtn.on{background:var(--ink);color:#fff;border-color:var(--ink);}
 .catmrow{display:flex;align-items:center;gap:10px;padding:11px 4px;border-bottom:1px solid var(--line);}
 .catmrow:last-child{border-bottom:none;}
 .ceColor{padding:0;cursor:pointer;}
@@ -198,6 +190,49 @@ h2.sec{font-size:0.875rem;margin:18px 4px 8px;color:var(--ink);}
 </style>
 </head>
 <body>
+<script>(function(){
+  var DK='omukae-display-v1';
+  function ld(){
+    var s={};
+    try{ s = JSON.parse(localStorage.getItem(DK)) || {}; }catch(e){}
+    if(!s.scale) s.scale = 100;
+    if(!s.weight) s.weight = 400;
+    if(!s.device) s.device = 'phone';
+    return s;
+  }
+  window.ttState = ld();
+  window.ttSave = function(){ try{ localStorage.setItem(DK, JSON.stringify(window.ttState)); }catch(e){} };
+  window.ttApply = function(withRedraw){
+    document.body.style.setProperty('--basefs', (16*window.ttState.scale/100)+'px');
+    document.body.style.fontWeight = window.ttState.weight;
+    document.documentElement.style.setProperty('--tt-maxw', (window.ttState.device==='tablet'?940:680)+'px');
+    if(withRedraw && typeof renderTab==='function' && document.getElementById('view')) renderTab();
+  };
+  window.ttRenderCard = function(){
+    var el;
+    el=document.getElementById('ttScale'); if(el) el.value=window.ttState.scale;
+    el=document.getElementById('ttScaleLabel'); if(el) el.textContent=window.ttState.scale+'%';
+    var bn=document.getElementById('ttWNormal'), bb=document.getElementById('ttWBold');
+    if(bn&&bb){
+      if(window.ttState.weight===600){ bb.style.background='#2c5077';bb.style.color='#fff';bn.style.background='#fff';bn.style.color='#2c5077'; }
+      else{ bn.style.background='#2c5077';bn.style.color='#fff';bb.style.background='#fff';bb.style.color='#2c5077'; }
+    }
+    var dp=document.getElementById('ttDevPhone'), dt=document.getElementById('ttDevTablet');
+    if(dp&&dt){
+      if(window.ttState.device==='tablet'){ dt.style.background='#2c5077';dt.style.color='#fff';dp.style.background='#fff';dp.style.color='#2c5077'; }
+      else{ dp.style.background='#2c5077';dp.style.color='#fff';dt.style.background='#fff';dt.style.color='#2c5077'; }
+    }
+  };
+  window.ttSetDevice = function(d){ window.ttState.device=d; window.ttSave(); window.ttApply(true); window.ttRenderCard(); };
+  window.ttSetWeight = function(w){ window.ttState.weight=w; window.ttSave(); window.ttApply(true); window.ttRenderCard(); };
+  window.ttSetScale = function(v){ window.ttState.scale=parseInt(v,10)||100; window.ttApply(false); window.ttRenderCard(); };
+  window.ttCommitScale = function(){ window.ttSave(); window.ttApply(true); };
+  window.ttResetDisplay = function(){ window.ttState={device:window.ttState.device, scale:100, weight:400}; window.ttSave(); window.ttApply(true); window.ttRenderCard(); };
+  window.ttApply(false);
+  document.addEventListener('click', function(){ setTimeout(window.ttRenderCard, 0); });
+  window.ttRenderCard();
+})();</script>
+
 <header class="app"><h1>わが家の家計簿</h1><div class="sub" id="hdrSub"></div></header>
 <main id="view"></main>
 <button class="fab" id="fab" style="display:none" aria-label="手入力で追加">＋</button>
@@ -1782,15 +1817,22 @@ async function renderSettings(){
   await loadRules();
   const txs=await tall("tx");
   el("view").innerHTML=`
-  <div class="card">
-    <h2>文字サイズ(老眼対策)</h2>
-    <p class="note" style="margin-top:0">アプリ全体の文字の大きさを変えられます。いつでも切り替えできます。</p>
-    <div class="fssel">
-      <button class="fsbtn" data-fs="normal">標準</button>
-      <button class="fsbtn" data-fs="large">大</button>
-      <button class="fsbtn" data-fs="xlarge">特大</button>
+
+  <div class="card" id="ttSetCard">
+    <h2>表示設定（文字の大きさ）</h2>
+    <p class="note" style="margin-top:0">文字が小さくて読みにくいときに、大きさ・太さ・端末の幅を調整できます。設定はこの端末に自動で保存されます。</p>
+    <label style="font-size:13px;font-weight:700;display:block;margin-bottom:4px;">お使いの端末</label>
+    <div style="display:flex;gap:8px;margin-bottom:10px;">
+      <button type="button" id="ttDevPhone" onclick="ttSetDevice(&#39;phone&#39;)" style="flex:1;padding:8px;border-radius:8px;border:1.5px solid #2c5077;font-size:13px;">📱 スマホ</button>
+      <button type="button" id="ttDevTablet" onclick="ttSetDevice(&#39;tablet&#39;)" style="flex:1;padding:8px;border-radius:8px;border:1.5px solid #2c5077;font-size:13px;">📟 タブレット</button>
     </div>
-    <p class="note" style="margin-bottom:0">プレビュー: <span style="font-weight:700">¥193,276 / 外食 ¥72,902</span></p>
+    <label style="font-size:13px;font-weight:700;display:block;margin-bottom:4px;">文字の大きさ：<span id="ttScaleLabel">100%</span></label>
+    <input type="range" id="ttScale" min="100" max="170" step="10" value="100" oninput="ttSetScale(this.value)" onchange="ttCommitScale()" style="width:100%;accent-color:#2c5077;">
+    <div style="display:flex;gap:8px;margin:10px 0;">
+      <button type="button" id="ttWNormal" onclick="ttSetWeight(400)" style="flex:1;padding:8px;border-radius:8px;border:1.5px solid #2c5077;font-size:13px;">標準</button>
+      <button type="button" id="ttWBold" onclick="ttSetWeight(600)" style="flex:1;padding:8px;border-radius:8px;border:1.5px solid #2c5077;font-size:13px;">太字</button>
+    </div>
+    <button type="button" onclick="ttResetDisplay()" style="width:100%;padding:9px;border-radius:8px;border:1.5px solid #c9472e;background:#fff;color:#c9472e;font-size:13px;">初期設定に戻す</button>
   </div>
   <div class="card">
     <button class="acc-head ${S.openCatMgmt?'open':''}" id="catMgmtToggle">
@@ -1844,12 +1886,7 @@ async function renderSettings(){
       await tdel("rules",Number(b.dataset.rid));
       await loadRules();drawRules();});
   };
-  // 文字サイズ切替
-  const curFs=localStorage.getItem("fontSize")||"normal";
-  el("view").querySelectorAll(".fsbtn").forEach(b=>{
-    if(b.dataset.fs===curFs) b.classList.add("on");
-    b.onclick=()=>applyFontSize(b.dataset.fs); // applyFontSizeがrenderTabを呼び再描画
-  });
+  window.ttRenderCard();
   // 開閉トグル
   el("catMgmtToggle").onclick=()=>{S.openCatMgmt=!S.openCatMgmt;renderSettings();};
   el("rulesToggle").onclick=()=>{S.openRules=!S.openRules;renderSettings();};
@@ -2437,14 +2474,6 @@ async function renderTax(){
 
 /* ---------- モーダル・タブ ---------- */
 const el=id=>document.getElementById(id);
-function applyFontSize(size){
-  document.body.classList.remove("fs-large","fs-xlarge");
-  if(size==="large") document.body.classList.add("fs-large");
-  else if(size==="xlarge") document.body.classList.add("fs-xlarge");
-  try{ localStorage.setItem("fontSize",size); }catch(e){}
-  // キャンバス系(ドーナツ・棒グラフ)も再描画して反映
-  if(typeof renderTab==="function" && document.getElementById("view")) renderTab();
-}
 function openCatPicker(cats, onChange){
   const grp={expense:[],income:[],transfer:[]};
   for(const c of cats){ const t=(CAT[c]||{}).type||"expense"; (grp[t]||grp.expense).push(c); }
@@ -2528,7 +2557,6 @@ el("fab").onclick=openManualAdd;
 
 /* ---------- 起動 ---------- */
 (async()=>{
-  applyFontSize(localStorage.getItem("fontSize")||"normal");
   await openDB();
   await loadCatCustom();
   await seedIfNeeded();
