@@ -727,6 +727,8 @@ function detectFormat(header){
   if(h.includes("利用日/キャンセル日") && h.includes("当月お支払日")) return "ppcard";
   // イオンカード利用明細: 1行目「ご利用カード」+「今回ご請求金額」ヘッダー
   if((header[0]||"").trim()==="ご利用カード") return "aeoncard";
+  // 三井住友カード(通常明細): 日付,ご利用先,本人/家族,支払方法(1回払い等),分割回数,支払月('26/08),利用金額,支払金額,...
+  if(normDate(header[0]) && header.length>=8 && /^(ご本人|家族)/.test((header[2]||"").trim()) && /払い/.test(header[3]||"")) return "smbccard";
   // Olive/Vpass: 1行目が「氏名 様, 4980-09**-..., Ｏｌｉｖｅ／クレジット」形式、または日付始まりの明細行
   if(header.length>=3 && ((header[0]||"").trim().endsWith("様") || /\*\*/.test(header[1]||""))) return "olive";
   if(normDate(header[0]) && header.length>=6 && parseAmt(header[2])!=null) return "olive";
@@ -999,6 +1001,39 @@ function normalizeSMBC(rows){
   return {txs:out, excluded:0, bals};
 }
 
+function normalizeSMBCCard(rows){ // 三井住友カード(通常)利用明細: 日付,ご利用先,本人/家族,支払方法,分割回数,支払月,利用金額,支払金額,...
+  const out=[]; const seen={}; const billByMonth={};
+  for(const c of rows){
+    if(!c.length) continue;
+    const d=normDate(c[0]); if(!d) continue;
+    const amount=parseAmt(c[6]) ?? parseAmt(c[7]) ?? parseAmt(c[9]);
+    if(amount==null) continue;
+    let who=(c[1]||"").trim();
+    const mm=who.match(/^(.*?)[／/](ｉＤ|ＮＦＣ|iD|NFC)$/); // 末尾の決済手段表記を除去
+    if(mm) who=mm[1].trim();
+    const holder=(c[2]||"").trim(); // ご本人/家族
+    const key=[d.date,who,amount].join("|");
+    seen[key]=(seen[key]||0)+1; // 同日同額の正当な複数取引に連番付与
+    out.push({
+      id:"smbccard:"+fnv(key)+"-"+seen[key],
+      date:d.date, time:"", amount, type:"expense",
+      counterparty:who, memo:holder&&holder!=="ご本人"?holder:"",
+      method:"三井住友カード", source:"smbccard", category:"", taxTag:"", locked:false
+    });
+    // 支払月('26/08 形式)ごとに合算し、カード未払金の計上に使う
+    const pm=String(c[5]||"").match(/(\d{2})\D(\d{2})/);
+    if(pm) { const m=`20${pm[1]}-${pm[2]}`; billByMonth[m]=(billByMonth[m]||0)+amount; }
+  }
+  // 通常は1ファイル=単一の支払月。複数月が混在する場合は合計額最大の月を代表として計上
+  let bill=null;
+  const months=Object.keys(billByMonth);
+  if(months.length){
+    const month=months.reduce((a,b)=>billByMonth[b]>billByMonth[a]?b:a, months[0]);
+    bill={ card:"三井住友カード", month, amount:billByMonth[month] };
+  }
+  return {txs:out, excluded:0, bill};
+}
+
 /* ---------- 自動分類 ---------- */
 const norm=s=>String(s||"").normalize("NFKC").toLowerCase(); // 全角半角・大小文字を同一視
 let rulesCache=[];
@@ -1036,7 +1071,7 @@ async function importFiles(files){
       if(!rows.length){logs.push(`✗ ${f.name}: 空のファイル`);
         hist.push({ts:Date.now(),file:f.name,err:"空のファイル"});continue;}
       const fmt=detectFormat(rows[0]);
-      if(!fmt){logs.push(`✗ ${f.name}: 未対応の形式です(PayPay / 三井住友銀行 / Olive / イオン銀行のCSVに対応)`);
+      if(!fmt){logs.push(`✗ ${f.name}: 未対応の形式です(PayPay / 三井住友銀行 / Olive / 三井住友カード / イオン銀行のCSVに対応)`);
         hist.push({ts:Date.now(),file:f.name,err:"未対応の形式"});continue;}
       const res = fmt==="paypay"?normalizePayPay(rows)
                 : fmt==="smbc"  ?normalizeSMBC(rows)
@@ -1045,6 +1080,7 @@ async function importFiles(files){
                 : fmt==="ppcard"?normalizePPCard(rows)
                 : fmt==="aeoncard"?normalizeAeonCard(rows)
                 : fmt==="bank"  ?normalizeBank(rows)
+                : fmt==="smbccard"?normalizeSMBCCard(rows)
                 : normalizeOlive(rows);
       const {txs,excluded} = res;
       let added=0,dup=0;
@@ -1057,7 +1093,8 @@ async function importFiles(files){
       const fname = fmt==="paypay"?"PayPay(取引履歴)":fmt==="smbc"?"三井住友銀行"
                   :fmt==="aeon"?"イオン銀行":fmt==="saison"?"セゾンカード"
                   :fmt==="ppcard"?"PayPayカード(請求明細)":fmt==="aeoncard"?"イオンカード(請求明細)"
-                  :fmt==="bank"?(res.accName||"銀行"):"Olive/三井住友カード";
+                  :fmt==="bank"?(res.accName||"銀行"):fmt==="smbccard"?"三井住友カード(通常明細)"
+                  :"Olive/三井住友カード";
       logs.push(`✓ ${f.name}(${fname})\n　取込 ${added}件 / 重複スキップ ${dup}件`+
         (excluded?` / ポイント行除外 ${excluded}件`:""));
       let balN=0, balAcc="";
@@ -1486,7 +1523,7 @@ async function renderList(){
     const cd=CAT[t.category]||{};
     const cls=t.type==="expense"?"exp":t.type==="income"?"inc":"trf";
     const sign=t.type==="expense"?"−":t.type==="income"?"+":"";
-    const src=t.source==="paypay"?"PayPay":t.source==="ppcard"?"PayPayカード":t.source==="smbc"?"三井住友":t.source==="olive"?"Olive":t.source==="aeon"?"イオン":t.source==="aeoncard"?"イオンカード":t.source==="saison"?"セゾン":t.source==="bank"?"銀行":"手入力";
+    const src=t.source==="paypay"?"PayPay":t.source==="ppcard"?"PayPayカード":t.source==="smbc"?"三井住友":t.source==="olive"?"Olive":t.source==="smbccard"?"三井住友カード":t.source==="aeon"?"イオン":t.source==="aeoncard"?"イオンカード":t.source==="saison"?"セゾン":t.source==="bank"?"銀行":"手入力";
     html+=`<div class="txrow" data-id="${esc(t.id)}">
       <span class="cat dot" style="background:${cd.color||"#ccc"}"></span>
       <div class="mid">
@@ -1673,7 +1710,7 @@ async function renderImport(){
   el("view").innerHTML=`
   <div class="card">
     <h2>CSVファイルの取込</h2>
-    <p class="dropmsg" style="margin:4px 0 12px">対応形式:<b>PayPayカード 請求明細</b> / <b>三井住友銀行 入出金明細</b> / <b>Olive(三井住友カード)利用明細</b> / <b>イオン銀行 入出金明細</b> / <b>イオンカード 利用明細</b> / <b>セゾンカード 利用明細</b><br>
+    <p class="dropmsg" style="margin:4px 0 12px">対応形式:<b>PayPayカード 請求明細</b> / <b>三井住友銀行 入出金明細</b> / <b>Olive(三井住友カード)利用明細</b> / <b>三井住友カード(通常)利用明細</b> / <b>イオン銀行 入出金明細</b> / <b>イオンカード 利用明細</b> / <b>セゾンカード 利用明細</b><br>
     複数ファイルをまとめて選べます。同じ取引は自動で重複除外されます。</p>
     <input type="file" id="files" accept=".csv,text/csv" multiple style="display:none">
     <button class="btn" id="pick">ファイルを選ぶ</button>
@@ -1689,13 +1726,14 @@ async function renderImport(){
     <p style="font-size:0.8125rem;margin:6px 0"><b>PayPayカード</b>:PayPayアプリ → カード → ご利用明細 → CSVダウンロード(請求月ごと)。利用日ベースで計上し、請求総額を「カード未払金」に記録します。毎月取り込んでください。</p>
     <p style="font-size:0.8125rem;margin:6px 0"><b>三井住友銀行</b>:SMBCダイレクト → 入出金明細 → 「明細をダウンロード」(CSV)</p>
     <p style="font-size:0.8125rem;margin:6px 0"><b>Olive(三井住友カード)</b>:Vpass → ご利用明細 → 「CSVで保存」。お支払い月ごとのファイルを毎月取り込んでください</p>
+    <p style="font-size:0.8125rem;margin:6px 0"><b>三井住友カード(通常タイプ)</b>:Vpass → ご利用明細 → 「CSVで保存」。利用日ベースで計上し、支払月の請求額を「カード未払金」に記録します。毎月取り込んでください。</p>
     <p style="font-size:0.8125rem;margin:6px 0"><b>イオン銀行</b>:イオン銀行ダイレクト → 入出金明細照会 → 期間指定 → 照会結果画面で「CSV形式」をダウンロード(前年同月以降・直近400件まで)。月末残高も自動記録されます。</p>
     <p style="font-size:0.8125rem;margin:6px 0"><b>イオンカード</b>:暮らしのマネーサイト → ご利用明細 → CSVダウンロード(請求月ごと)。利用日ベースで計上し、請求額を「カード未払金」に記録します。2枚ある場合は各カードの明細を取り込んでください。</p>
     <p style="font-size:0.8125rem;margin:6px 0"><b>セゾンカード(三井ショッピングパークカード等)</b>:Netアンサー → ご利用明細 → CSVダウンロード。お支払い月ごとのファイルを毎月取り込んでください。</p>
   </div>
   <div class="card">
     <h2>二重計上を防ぐしくみ</h2>
-    <p style="font-size:0.8125rem;margin:6px 0">カードでの支払いは、後日銀行口座からまとめて引き落とされます。このアプリでは<b>カード明細側(PayPay・Olive)を利用日ベースの支出として計上</b>し、銀行側の「PAYPAYカード」「ミツイスミトモカード」引落は自動的に「振替(対象外)」へ分類して二重計上を防ぎます。ご本人名義間の口座振込も同様です。Oliveの明細は毎月取り込む運用にしてください(取り込まない月はカード支出が記録されなくなります)。</p>
+    <p style="font-size:0.8125rem;margin:6px 0">カードでの支払いは、後日銀行口座からまとめて引き落とされます。このアプリでは<b>カード明細側(PayPay・Olive・三井住友カード)を利用日ベースの支出として計上</b>し、銀行側の「PAYPAYカード」「ミツイスミトモカード」引落は自動的に「振替(対象外)」へ分類して二重計上を防ぎます。ご本人名義間の口座振込も同様です。Olive・三井住友カードの明細は毎月取り込む運用にしてください(取り込まない月はカード支出が記録されなくなります)。</p>
   </div>`;
   el("pick").onclick=()=>el("files").click();
   el("files").onchange=async e=>{
