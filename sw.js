@@ -3,7 +3,7 @@
    自分の名前空間（TT_NS）のものだけを消します。 */
 const TT_NS = 'tt:kakeibo:';
 const TT_OLD = 'kakeibo-v45';   /* 旧名。次の更新のときに消して構いません */
-const CACHE = TT_NS + 'v49';
+const CACHE = TT_NS + 'v50';
 const ASSETS = ["./", "./index.html", "./manifest.json", "./icon-180.png", "./icon-512.png", "./jszip.min.js", "./template_iryouhi.b64.js"];
 
 self.addEventListener("install", e => {
