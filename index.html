@@ -2662,6 +2662,8 @@ el("fab").onclick=openManualAdd;
   await migrate6();
   await migrate7();
   await migrate8();
+  await migrate9();
+  await migrate10();
   renderTab();
   if("serviceWorker" in navigator){
     try{ navigator.serviceWorker.register("./sw.js"); }catch(e){}
