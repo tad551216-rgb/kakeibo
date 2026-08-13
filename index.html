@@ -505,6 +505,7 @@ async function seedIfNeeded(){
     await tput("meta",{k:"mig7",v:1});
     await tput("meta",{k:"mig8",v:1});
     await tput("meta",{k:"mig9",v:1});
+    await tput("meta",{k:"mig10",v:1});
   }
   if(!(await tget("meta","seededAcc"))){
     for(const [name,kind] of [["イオン銀行","asset"],["三井住友銀行","asset"],["財布(現金)","asset"]])
@@ -666,6 +667,32 @@ async function migrate9(){
   // 自動で振替(対象外)にする機能を追加(importFiles内)。
   // 既存データは手動確定(locked)済みのため変更しない。
   await tput("meta",{k:"mig9",v:1});
+  await migrate10();
+}
+async function migrate10(){
+  if(await tget("meta","mig10")) return;
+  // 2026年8月分のPayPayアプリ明細を支出へ戻す。
+  // 確定明細(9月中旬)が出るまでは仮の支出として集計に含めるため。
+  // 確定CSVを取り込んだ時点で importFiles 側が自動で振替(対象外)にする。
+  await loadRules();
+  let back=0, stay=0;
+  for(const t of await tall("tx")){
+    if(t.source!=="paypay") continue;
+    if(t.date.slice(0,7)!=="2026-08") continue;
+    if(t.category!=="振替(対象外)") continue;
+    const hay=norm(t.counterparty+" "+t.memo);
+    if(hay.includes(norm("チャージ"))) continue;   // 本来の振替(残高チャージ)は残す
+    t.type="expense"; t.category=""; t.locked=false;
+    categorize(t);
+    if(t.category==="振替(対象外)"){ stay++; }else{ back++; }
+    await tput("tx",t);
+  }
+  await tput("meta",{k:"mig10",v:1});
+  if(back||stay){
+    let m=`8月のPayPay明細 ${back}件を支出に戻しました。`;
+    if(stay) m+=`\n\n${stay}件は「振替(対象外)」のままです。設定のルール一覧に店名が振替(対象外)で登録されている可能性があります。`;
+    setTimeout(()=>alert(m),300);
+  }
 }
 async function ensureAccount(name,kind){
   let a=(await tall("accounts")).find(x=>x.name===name);
@@ -1116,9 +1143,10 @@ async function importFiles(files){
         let ex=0;
         for(const t of await tall("tx")){
           if(t.source!=="paypay") continue;
-          if(t.locked) continue;                     // 手動確定済みは触らない
           if(t.date.slice(0,7)!==target) continue;   // 暦月まるごと
-          if(t.category==="振替(対象外)") continue;  // 冪等
+          if(t.category==="振替(対象外)") continue;  // 冪等(手動除外済みを含む)
+          // locked(手動確定)でも除外する。確定明細が出た月のアプリ側行は
+          // 手でカテゴリを付けていても必ず暫定扱いとするため。
           t.category="振替(対象外)"; t.type="transfer";
           t.autoExcluded=target;
           await tput("tx",t); ex++;
