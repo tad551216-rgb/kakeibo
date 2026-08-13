@@ -658,6 +658,71 @@ async function migrate8(){
   }
   await tput("meta",{k:"mig8",v:1});
 }
+/* ---------- 重複監査 ---------- */
+const TT_SRC_CARD={smbccard:"三井住友カード",olive:"Olive",saison:"セゾン",ppcard:"PayPay",aeoncard:"イオンカード"};
+const TT_SRC_NAME={paypay:"PayPay(アプリ)",ppcard:"PayPayカード",olive:"Olive/三井住友",smbccard:"三井住友カード",
+  saison:"セゾン",aeon:"イオン銀行",aeoncard:"イオンカード",smbc:"三井住友銀行",bank:"銀行",manual:"手入力"};
+async function ttDupAudit(){
+  const out=el("ttDupOut"); if(!out) return;
+  out.innerHTML='<p class="note">検出中…</p>';
+  const map={};
+  for(const t of await tall("tx")){
+    if(t.category==="振替(対象外)") continue;   // 集計外のため対象にしない
+    if(!t.amount) continue;
+    const k=t.date+"|"+t.amount+"|"+(t.type||"");
+    (map[k]=map[k]||[]).push(t);
+  }
+  const groups=Object.values(map)
+    .filter(g=>g.length>1 && new Set(g.map(t=>t.source)).size>1)
+    .sort((a,b)=>a[0].date<b[0].date?1:-1);
+  if(!groups.length){ out.innerHTML='<p class="note" style="margin-top:10px">重複の候補はありませんでした。</p>'; return; }
+  // 重複分の金額(各グループの2件目以降)を余剰として集計
+  let waste=0; for(const g of groups) waste+=g[0].amount*(g.length-1);
+  const bySrc={};
+  for(const g of groups) for(const t of g.slice(1)) bySrc[t.source]=(bySrc[t.source]||0)+1;
+  out.innerHTML=`<p class="note" style="margin-top:12px"><b>${groups.length}組</b>の候補 / 余剰計 <b>${yen(waste)}</b><br>
+    余剰の取込元: ${Object.entries(bySrc).map(([k,v])=>`${TT_SRC_NAME[k]||k} ${v}件`).join(" / ")||"—"}</p>`+
+    groups.map(g=>{
+      const same=g.every(t=>norm(t.counterparty)===norm(g[0].counterparty));
+      return `<div style="border:1px solid var(--line,#DDD6C7);border-radius:8px;padding:8px 10px;margin-top:8px">
+        <div style="font-size:12px;color:#6B7280">${g[0].date} / ${yen(g[0].amount)} / 店名${same?"一致":"不一致"}</div>`+
+        g.map(t=>`<div style="display:flex;align-items:center;gap:8px;margin-top:6px;font-size:13px">
+          <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+            <b>${esc(TT_SRC_NAME[t.source]||t.source||"?")}</b> ${esc(t.counterparty)}<br>
+            <span style="color:#6B7280;font-size:12px">${esc(t.category||"")}</span></span>
+          <button type="button" onclick="ttDupDelete('${esc(t.id).replace(/'/g,"")}')"
+            style="flex:none;padding:6px 12px;border-radius:6px;border:1.5px solid #c9472e;background:#fff;color:#c9472e;font-size:12px">削除</button>
+        </div>`).join("")+`</div>`;
+    }).join("");
+}
+async function ttDupDelete(id){
+  const t=await tget("tx",id); if(!t){ alert("見つかりませんでした"); return; }
+  if(!confirm(`この明細を削除します。\n\n${t.date}\n${t.counterparty}\n${yen(t.amount)}（${TT_SRC_NAME[t.source]||t.source}）`)) return;
+  await tdel("tx",id);
+  await ttDupAudit();
+}
+// カード未払金の内訳から、明細が1件も残っていないカードを取り除いて再計算する
+async function ttBillClean(){
+  const all=await tall("tx");
+  const alive=new Set(all.map(t=>TT_SRC_CARD[t.source]).filter(Boolean));
+  const slots=(await tall("meta")).filter(x=>String(x.k).startsWith("cardbill:"));
+  const liab=await ensureAccount("カード未払金","liability");
+  const removed=[]; let n=0;
+  for(const sl of slots){
+    const v=sl.v||{}; let changed=false;
+    for(const card of Object.keys(v)) if(!alive.has(card)){ removed.push(`${sl.k.slice(9)} ${card} ${yen(v[card])}`); delete v[card]; changed=true; }
+    if(!changed) continue;
+    await tput("meta",{k:sl.k,v});
+    const month=sl.k.slice(9);
+    await tput("bal",{bid:month+":"+liab.aid,month,aid:liab.aid,
+      amount:Object.values(v).reduce((a,b)=>a+b,0),auto:true});
+    n++;
+  }
+  alert(n?`未払金を${n}ヶ月分修正しました。\n\n`+removed.join("\n"):"取り除く内訳はありませんでした。");
+  renderTab();
+}
+window.ttDupAudit=ttDupAudit; window.ttDupDelete=ttDupDelete; window.ttBillClean=ttBillClean;
+
 async function ensureAccount(name,kind){
   let a=(await tall("accounts")).find(x=>x.name===name);
   if(a) return a;
@@ -1930,8 +1995,14 @@ async function renderSettings(){
     <div style="height:8px"></div>
     <button class="btn danger" id="wipe">全データを削除</button>
   </div>
+  <div class="card"><h2>重複監査</h2>
+    <p class="note" style="margin-top:0">同じ取引を別形式のCSVで二重に取り込んでいないか調べます。日付・金額・入出金の向きが一致し、かつ取込元(source)が異なる明細を候補として表示します。「振替(対象外)」は集計外のため対象にしません。</p>
+    <button type="button" onclick="ttDupAudit()" style="width:100%;padding:10px;border-radius:8px;border:1.5px solid #2C5077;background:#2C5077;color:#FFFDF7;font-size:14px;font-weight:600;">重複を検出する</button>
+    <button type="button" onclick="ttBillClean()" style="width:100%;margin-top:8px;padding:9px;border-radius:8px;border:1.5px solid #c9472e;background:#fff;color:#c9472e;font-size:13px;">未払金の内訳を整理する</button>
+    <div id="ttDupOut"></div>
+  </div>
   <div class="card"><h2>このアプリについて</h2>
-    <p class="note" style="margin-top:0">わが家の家計簿 Phase 1（ビルド b49）<br>
+    <p class="note" style="margin-top:0">わが家の家計簿 Phase 1（ビルド b50）<br>
     取込(PayPay・三井住友銀行CSV)/自動分類/月次ダッシュボード/医療費メモ。<br>
     Phase 2で控除証明書XML取込と税計算、Phase 3でふるさと納税シミュレーションと医療費集計フォーム(Excel)出力を予定。</p></div>`;
   const drawRules=()=>{
