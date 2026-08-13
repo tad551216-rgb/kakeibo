@@ -504,6 +504,7 @@ async function seedIfNeeded(){
     await tput("meta",{k:"mig6",v:1});
     await tput("meta",{k:"mig7",v:1});
     await tput("meta",{k:"mig8",v:1});
+    await tput("meta",{k:"mig9",v:1});
   }
   if(!(await tget("meta","seededAcc"))){
     for(const [name,kind] of [["イオン銀行","asset"],["三井住友銀行","asset"],["財布(現金)","asset"]])
@@ -657,6 +658,14 @@ async function migrate8(){
     if(t.category+"|"+t.type!==before) await tput("tx",t);
   }
   await tput("meta",{k:"mig8",v:1});
+  await migrate9();
+}
+async function migrate9(){
+  if(await tget("meta","mig9")) return;
+  // PayPayカード確定明細の取込時に、同月のPayPayアプリ暫定データを
+  // 自動で振替(対象外)にする機能を追加(importFiles内)。
+  // 既存データは手動確定(locked)済みのため変更しない。
+  await tput("meta",{k:"mig9",v:1});
 }
 async function ensureAccount(name,kind){
   let a=(await tall("accounts")).find(x=>x.name===name);
@@ -1097,6 +1106,25 @@ async function importFiles(files){
                   :"Olive/三井住友カード";
       logs.push(`✓ ${f.name}(${fname})\n　取込 ${added}件 / 重複スキップ ${dup}件`+
         (excluded?` / ポイント行除外 ${excluded}件`:""));
+      // PayPayカード確定明細を取り込んだら、その利用月のPayPayアプリ暫定データを
+      // 振替(対象外)にする(確定側の金額を正とするため二重計上を防ぐ)。
+      if(fmt==="ppcard" && txs.length){
+        const tally={};
+        for(const t of txs){ const m=t.date.slice(0,7); tally[m]=(tally[m]||0)+1; }
+        // キャンセル行が他月日付を持つ場合に備え、最頻の年月を対象とする
+        const target=Object.keys(tally).sort((x,y)=>tally[y]-tally[x])[0];
+        let ex=0;
+        for(const t of await tall("tx")){
+          if(t.source!=="paypay") continue;
+          if(t.locked) continue;                     // 手動確定済みは触らない
+          if(t.date.slice(0,7)!==target) continue;   // 暦月まるごと
+          if(t.category==="振替(対象外)") continue;  // 冪等
+          t.category="振替(対象外)"; t.type="transfer";
+          t.autoExcluded=target;
+          await tput("tx",t); ex++;
+        }
+        logs.push(`　└ ${target} のPayPay暫定データ ${ex}件を振替(対象外)に変更`);
+      }
       let balN=0, balAcc="";
       if((fmt==="smbc"||fmt==="bank"||fmt==="aeon") && res.bals && Object.keys(res.bals).length){
         const accName = fmt==="smbc" ? "三井住友銀行" : (res.accName||"銀行口座");
