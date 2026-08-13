@@ -688,12 +688,31 @@ async function migrate10(){
     await tput("tx",t);
   }
   await tput("meta",{k:"mig10",v:1});
-  if(back||stay){
-    let m=`8月のPayPay明細 ${back}件を支出に戻しました。`;
-    if(stay) m+=`\n\n${stay}件は「振替(対象外)」のままです。設定のルール一覧に店名が振替(対象外)で登録されている可能性があります。`;
-    setTimeout(()=>alert(m),300);
-  }
+  setTimeout(()=>alert(`[b48] 8月のPayPay明細\n支出に戻した: ${back}件\n振替のまま: ${stay}件`),300);
 }
+// 診断: 8月のPayPayアプリ明細がどのカテゴリになっているかを表示する。
+// mig10フラグも消すので、閉じてから再起動すると移行をやり直せる。
+async function ttDiag(){
+  const all=await tall("tx");
+  const aug=all.filter(t=>t.source==="paypay" && String(t.date).slice(0,7)==="2026-08");
+  const cnt={};
+  for(const t of aug) cnt[t.category||"(空)"]=(cnt[t.category||"(空)"]||0)+1;
+  const src={};
+  for(const t of all) src[t.source||"(空)"]=(src[t.source||"(空)"]||0)+1;
+  const mig=[];
+  for(const k of ["mig8","mig9","mig10"]) if(await tget("meta",k)) mig.push(k);
+  await tdel("meta","mig10");
+  alert(
+    "[ビルド b48]\n\n"+
+    "全明細 "+all.length+"件\n"+
+    "source内訳: "+JSON.stringify(src)+"\n\n"+
+    "2026-08 の source=paypay: "+aug.length+"件\n"+
+    "カテゴリ内訳: "+JSON.stringify(cnt)+"\n\n"+
+    "済フラグ: "+mig.join(",")+"\n"+
+    "mig10を解除しました。アプリを再起動すると移行をやり直します。"
+  );
+}
+window.ttDiag=ttDiag;
 async function ensureAccount(name,kind){
   let a=(await tall("accounts")).find(x=>x.name===name);
   if(a) return a;
@@ -1967,7 +1986,9 @@ async function renderSettings(){
     <button class="btn danger" id="wipe">全データを削除</button>
   </div>
   <div class="card"><h2>このアプリについて</h2>
-    <p class="note" style="margin-top:0">わが家の家計簿 Phase 1<br>
+    <p class="note" style="margin-top:0"><b>ビルド b48</b><br>
+    <button type="button" onclick="ttDiag()" style="margin:6px 0;padding:8px 14px;border-radius:8px;border:1.5px solid #2C5077;background:#fff;color:#2C5077;font-size:13px;">8月PayPayの状態を確認</button><br>
+    わが家の家計簿 Phase 1<br>
     取込(PayPay・三井住友銀行CSV)/自動分類/月次ダッシュボード/医療費メモ。<br>
     Phase 2で控除証明書XML取込と税計算、Phase 3でふるさと納税シミュレーションと医療費集計フォーム(Excel)出力を予定。</p></div>`;
   const drawRules=()=>{
