@@ -1380,6 +1380,66 @@ function drawDonut(canvas, items, centerLabel, centerValue){
   ctx.fillStyle="#1B2A4A";ctx.font=`700 ${17*k}px -apple-system,'Hiragino Sans'`;
   ctx.fillText(centerValue,cx,cy+13);
 }
+/* ---------- アプリのインストール(PWA) ----------
+   Chromeはインストール可能と判断したときだけ beforeinstallprompt を投げます。
+   既定のミニ情報バーを止めてイベントを保持し、設定タブのボタンから呼び出します。
+   iOS Safariはこのイベントを実装していないため、手順の案内に切り替えます。 */
+let ttInstallEvent = null;
+window.addEventListener("beforeinstallprompt", e => {
+  e.preventDefault();
+  ttInstallEvent = e;
+  ttRenderInstallCard();
+});
+window.addEventListener("appinstalled", () => {
+  ttInstallEvent = null;
+  ttRenderInstallCard();
+});
+function ttIsStandalone(){
+  return (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches)
+      || window.navigator.standalone === true;
+}
+function ttIsIOS(){
+  return /iPad|iPhone|iPod/.test(navigator.userAgent)
+      || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+}
+/* 設定タブが表示されているときだけ、インストール欄を描き直す */
+function ttRenderInstallCard(){
+  const box = el("ttInstallBox");
+  if(!box) return;
+  if(ttIsStandalone()){
+    box.innerHTML = `<p class="note" style="margin:0">インストール済みです。ホーム画面のアイコンから起動しています。</p>`;
+    return;
+  }
+  if(ttInstallEvent){
+    box.innerHTML = `<p class="note" style="margin-top:0">ホーム画面にアイコンを置き、ブラウザの枠なしで起動できます。</p>
+      <button class="btn sub" id="ttInstallBtn">アプリとしてインストール</button>`;
+    el("ttInstallBtn").onclick = async () => {
+      const ev = ttInstallEvent;
+      if(!ev) return;
+      ttInstallEvent = null;
+      try{
+        ev.prompt();
+        const res = await ev.userChoice;
+        box.innerHTML = res && res.outcome === "accepted"
+          ? `<p class="note" style="margin:0">インストールしました。ホーム画面のアイコンから起動してください。</p>`
+          : `<p class="note" style="margin:0">インストールを中止しました。もう一度行うには、この画面を再読み込みしてください。</p>`;
+      }catch(err){
+        box.innerHTML = `<p class="note" style="margin:0">インストールを開始できませんでした: ${esc(err.message||String(err))}</p>`;
+      }
+    };
+    return;
+  }
+  if(ttIsIOS()){
+    box.innerHTML = `<p class="note" style="margin:0">iPhone・iPadでは、Safariの共有ボタン（□に↑）から「ホーム画面に追加」を選んでください。</p>`;
+    return;
+  }
+  box.innerHTML = `<p class="note" style="margin-top:0">いまこの画面では、ブラウザからインストールの合図が届いていません。次のどれかに当てはまることが多いです。</p>
+    <p class="note" style="margin:6px 0 0">・すでにインストール済み（その場合はホーム画面のアイコンから開いてください）<br>
+    ・LINEやメールのアプリ内ブラウザで開いている（Chromeで開き直してください）<br>
+    ・アドレスが https://tad551216-rgb.github.io/kakeibo/ になっていない<br>
+    ・ページを開いた直後で判定が終わっていない（一度再読み込みしてください）</p>`;
+}
+
 /* 当月(ローカル時刻)。toISOString はUTCなので月初の朝にずれる。 */
 function curMonth(){
   const d=new Date();
@@ -2067,8 +2127,12 @@ async function renderSettings(){
     <button type="button" onclick="ttBillClean()" style="width:100%;margin-top:8px;padding:9px;border-radius:8px;border:1.5px solid #c9472e;background:#fff;color:#c9472e;font-size:13px;">未払金の内訳を整理する</button>
     <div id="ttDupOut"></div>
   </div>
+  <div class="card">
+    <h2>アプリとして使う</h2>
+    <div id="ttInstallBox"></div>
+  </div>
   <div class="card"><h2>このアプリについて</h2>
-    <p class="note" style="margin-top:0">わが家の家計簿 Phase 1（ビルド b54）<br>
+    <p class="note" style="margin-top:0">わが家の家計簿 Phase 1（ビルド b55）<br>
     取込(PayPay・三井住友銀行CSV)/自動分類/月次ダッシュボード/医療費メモ。<br>
     Phase 2で控除証明書XML取込と税計算、Phase 3でふるさと納税シミュレーションと医療費集計フォーム(Excel)出力を予定。</p></div>`;
   const drawRules=()=>{
@@ -2082,6 +2146,7 @@ async function renderSettings(){
       await loadRules();drawRules();});
   };
   window.ttRenderCard();
+  ttRenderInstallCard();
   // 開閉トグル
   el("catMgmtToggle").onclick=()=>{S.openCatMgmt=!S.openCatMgmt;renderSettings();};
   el("rulesToggle").onclick=()=>{S.openRules=!S.openRules;renderSettings();};
