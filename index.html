@@ -1380,6 +1380,11 @@ function drawDonut(canvas, items, centerLabel, centerValue){
   ctx.fillStyle="#1B2A4A";ctx.font=`700 ${17*k}px -apple-system,'Hiragino Sans'`;
   ctx.fillText(centerValue,cx,cy+13);
 }
+/* 当月(ローカル時刻)。toISOString はUTCなので月初の朝にずれる。 */
+function curMonth(){
+  const d=new Date();
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;
+}
 function drawBars(canvas, labels, incs, exps, months){
   const dpr=window.devicePixelRatio||1;
   const w=canvas.clientWidth, h=170;
@@ -1401,7 +1406,7 @@ function drawBars(canvas, labels, incs, exps, months){
   /* 平均線 ── 年金のように隔月で入る収入があると棒が上下して水準が読めないため、
      平均を破線で重ねます。集計は「前月まで」。まだ締まっていない当月と、
      収入も支出も0の月(未到来・データなし)は分母から外します。 */
-  const thisMonth=new Date().toISOString().slice(0,7);
+  const thisMonth=curMonth();
   const live=[];
   for(let i=0;i<n;i++){
     if(months && months[i] && months[i]>=thisMonth) continue;   /* 当月以降は除外 */
@@ -1554,7 +1559,7 @@ async function renderHome(){
   <div class="card">
     <h2>${trendLabel}</h2>
     <canvas id="bars"></canvas>
-    <div class="note">破線は平均(前月までの実績。当月は集計に含みません)。</div>
+    ${trendMonths.some(m=>m>=curMonth())?`<div class="note">破線は平均(前月までの実績。当月は集計に含みません)。</div>`:""}
   </div>
   <div class="card">
     <h2>${year}年 医療費の累計(確定申告メモ)</h2>
@@ -2063,7 +2068,7 @@ async function renderSettings(){
     <div id="ttDupOut"></div>
   </div>
   <div class="card"><h2>このアプリについて</h2>
-    <p class="note" style="margin-top:0">わが家の家計簿 Phase 1（ビルド b53）<br>
+    <p class="note" style="margin-top:0">わが家の家計簿 Phase 1（ビルド b54）<br>
     取込(PayPay・三井住友銀行CSV)/自動分類/月次ダッシュボード/医療費メモ。<br>
     Phase 2で控除証明書XML取込と税計算、Phase 3でふるさと納税シミュレーションと医療費集計フォーム(Excel)出力を予定。</p></div>`;
   const drawRules=()=>{
