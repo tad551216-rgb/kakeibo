@@ -1397,6 +1397,26 @@ function drawBars(canvas, labels, incs, exps){
     ctx.fillStyle="#BF4E3C";ctx.fillRect(x+1.5,base-eh,bw,eh);
     ctx.fillStyle="#8A8F98";ctx.fillText(labels[i],x,h-7);
   }
+  /* 平均線 ── 年金のように隔月で入る収入があると棒が上下して水準が読めないため、
+     期間平均を破線で重ねます。収入も支出も0の月(未到来の月)は平均から除外。 */
+  const live=[];
+  for(let i=0;i<n;i++) if(incs[i]>0||exps[i]>0) live.push(i);
+  if(live.length){
+    const avg=a=>live.reduce((s,i)=>s+(a[i]||0),0)/live.length;
+    const short=v=>v>=10000?(Math.round(v/1000)/10)+"万":Math.round(v).toLocaleString();
+    const line=(v,color,label,side)=>{
+      const y=base-(v/max)*(base-top);
+      ctx.save();
+      ctx.strokeStyle=color;ctx.lineWidth=1.5;ctx.setLineDash([5,3]);
+      ctx.beginPath();ctx.moveTo(0,y+0.5);ctx.lineTo(w,y+0.5);ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle=color;ctx.textAlign=side;
+      ctx.fillText(label+" "+short(v), side==="left"?3:w-3, Math.max(top-2,y-4));
+      ctx.restore();
+    };
+    line(avg(incs),"#2E7D5B","平均収入","left");
+    line(avg(exps),"#BF4E3C","平均支出","right");
+  }
   ctx.strokeStyle="#E3E6E0";ctx.beginPath();ctx.moveTo(0,base+0.5);ctx.lineTo(w,base+0.5);ctx.stroke();
 }
 
@@ -2025,7 +2045,7 @@ async function renderSettings(){
     <div id="ttDupOut"></div>
   </div>
   <div class="card"><h2>このアプリについて</h2>
-    <p class="note" style="margin-top:0">わが家の家計簿 Phase 1（ビルド b51）<br>
+    <p class="note" style="margin-top:0">わが家の家計簿 Phase 1（ビルド b52）<br>
     取込(PayPay・三井住友銀行CSV)/自動分類/月次ダッシュボード/医療費メモ。<br>
     Phase 2で控除証明書XML取込と税計算、Phase 3でふるさと納税シミュレーションと医療費集計フォーム(Excel)出力を予定。</p></div>`;
   const drawRules=()=>{
