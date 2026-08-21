@@ -1380,16 +1380,17 @@ function drawDonut(canvas, items, centerLabel, centerValue){
   ctx.fillStyle="#1B2A4A";ctx.font=`700 ${17*k}px -apple-system,'Hiragino Sans'`;
   ctx.fillText(centerValue,cx,cy+13);
 }
-function drawBars(canvas, labels, incs, exps){
+function drawBars(canvas, labels, incs, exps, months){
   const dpr=window.devicePixelRatio||1;
   const w=canvas.clientWidth, h=170;
   canvas.width=w*dpr;canvas.height=h*dpr;canvas.style.height=h+"px";
   const ctx=canvas.getContext("2d");ctx.scale(dpr,dpr);
   const max=Math.max(1,...incs,...exps);
   const n=labels.length, slot=w/n, bw=Math.min(16,slot/3.2);
-  const base=h-22, top=14;
+  const base=h-22, top=30;   /* top は右上の平均値表示ぶんの余白 */
   const _fs=parseFloat(getComputedStyle(document.body).getPropertyValue("--basefs"))||16;
-  ctx.font=`${10*(_fs/16)}px -apple-system,'Hiragino Sans'`;ctx.textAlign="center";
+  const fs=10*(_fs/16);
+  ctx.font=`${fs}px -apple-system,'Hiragino Sans'`;ctx.textAlign="center";
   for(let i=0;i<n;i++){
     const x=slot*i+slot/2;
     const ih=(incs[i]/max)*(base-top), eh=(exps[i]/max)*(base-top);
@@ -1398,24 +1399,40 @@ function drawBars(canvas, labels, incs, exps){
     ctx.fillStyle="#8A8F98";ctx.fillText(labels[i],x,h-7);
   }
   /* 平均線 ── 年金のように隔月で入る収入があると棒が上下して水準が読めないため、
-     期間平均を破線で重ねます。収入も支出も0の月(未到来の月)は平均から除外。 */
+     平均を破線で重ねます。集計は「前月まで」。まだ締まっていない当月と、
+     収入も支出も0の月(未到来・データなし)は分母から外します。 */
+  const thisMonth=new Date().toISOString().slice(0,7);
   const live=[];
-  for(let i=0;i<n;i++) if(incs[i]>0||exps[i]>0) live.push(i);
+  for(let i=0;i<n;i++){
+    if(months && months[i] && months[i]>=thisMonth) continue;   /* 当月以降は除外 */
+    if(incs[i]>0||exps[i]>0) live.push(i);
+  }
   if(live.length){
     const avg=a=>live.reduce((s,i)=>s+(a[i]||0),0)/live.length;
-    const short=v=>v>=10000?(Math.round(v/1000)/10)+"万":Math.round(v).toLocaleString();
-    const line=(v,color,label,side)=>{
+    const aInc=avg(incs), aExp=avg(exps);
+    const dash=(v,color)=>{
       const y=base-(v/max)*(base-top);
       ctx.save();
       ctx.strokeStyle=color;ctx.lineWidth=1.5;ctx.setLineDash([5,3]);
       ctx.beginPath();ctx.moveTo(0,y+0.5);ctx.lineTo(w,y+0.5);ctx.stroke();
-      ctx.setLineDash([]);
-      ctx.fillStyle=color;ctx.textAlign=side;
-      ctx.fillText(label+" "+short(v), side==="left"?3:w-3, Math.max(top-2,y-4));
       ctx.restore();
     };
-    line(avg(incs),"#2E7D5B","平均収入","left");
-    line(avg(exps),"#BF4E3C","平均支出","right");
+    dash(aInc,"#2E7D5B");
+    dash(aExp,"#BF4E3C");
+    /* 右上に金額を2行で表示(線の上には書かない) */
+    ctx.save();
+    ctx.textAlign="right";
+    const row=(v,color,label,y)=>{
+      const txt=label+" "+yen(v);
+      ctx.fillStyle=color;ctx.fillText(txt,w-2,y);
+      const tw=ctx.measureText(txt).width;
+      ctx.strokeStyle=color;ctx.lineWidth=1.5;ctx.setLineDash([4,2.5]);
+      ctx.beginPath();ctx.moveTo(w-tw-16,y-fs/2+1);ctx.lineTo(w-tw-4,y-fs/2+1);ctx.stroke();
+      ctx.setLineDash([]);
+    };
+    row(aInc,"#2E7D5B","平均収入",fs+1);
+    row(aExp,"#BF4E3C","平均支出",fs*2+4);
+    ctx.restore();
   }
   ctx.strokeStyle="#E3E6E0";ctx.beginPath();ctx.moveTo(0,base+0.5);ctx.lineTo(w,base+0.5);ctx.stroke();
 }
@@ -1537,6 +1554,7 @@ async function renderHome(){
   <div class="card">
     <h2>${trendLabel}</h2>
     <canvas id="bars"></canvas>
+    <div class="note">破線は平均(前月までの実績。当月は集計に含みません)。</div>
   </div>
   <div class="card">
     <h2>${year}年 医療費の累計(確定申告メモ)</h2>
@@ -1566,7 +1584,7 @@ async function renderHome(){
   el("cellInc").onclick=()=>{S.homeMode="income";renderHome();};
   el("cellExp").onclick=()=>{S.homeMode="expense";renderHome();};
   if(txs.length&&dispItems.length) drawDonut(el("donut"),dispItems,mode==="income"?"収入合計":"支出合計",yen(dispTotal));
-  drawBars(el("bars"),trendMonths.map(m=>Number(m.slice(5))+"月"),incs,exps);
+  drawBars(el("bars"),trendMonths.map(m=>Number(m.slice(5))+"月"),incs,exps,trendMonths);
 }
 
 /* ---------- 明細 ---------- */
@@ -2045,7 +2063,7 @@ async function renderSettings(){
     <div id="ttDupOut"></div>
   </div>
   <div class="card"><h2>このアプリについて</h2>
-    <p class="note" style="margin-top:0">わが家の家計簿 Phase 1（ビルド b52）<br>
+    <p class="note" style="margin-top:0">わが家の家計簿 Phase 1（ビルド b53）<br>
     取込(PayPay・三井住友銀行CSV)/自動分類/月次ダッシュボード/医療費メモ。<br>
     Phase 2で控除証明書XML取込と税計算、Phase 3でふるさと納税シミュレーションと医療費集計フォーム(Excel)出力を予定。</p></div>`;
   const drawRules=()=>{
