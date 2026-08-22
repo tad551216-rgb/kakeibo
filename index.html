@@ -203,7 +203,9 @@ h2.sec{font-size:0.875rem;margin:18px 4px 8px;color:var(--ink);}
   window.ttState = ld();
   window.ttSave = function(){ try{ localStorage.setItem(DK, JSON.stringify(window.ttState)); }catch(e){} };
   window.ttApply = function(withRedraw){
-    document.body.style.setProperty('--basefs', (16*window.ttState.scale/100)+'px');
+    /* rem は html(ルート)の font-size 基準。body に設定すると rem 指定の文字が
+       いっさい追従しないため、必ず documentElement 側へ設定すること。 */
+    document.documentElement.style.setProperty('--basefs', (16*window.ttState.scale/100)+'px');
     document.body.style.fontWeight = window.ttState.weight;
     document.documentElement.style.setProperty('--tt-maxw', (window.ttState.device==='tablet'?940:680)+'px');
     if(withRedraw && typeof renderTab==='function' && document.getElementById('view')) renderTab();
@@ -2132,7 +2134,7 @@ async function renderSettings(){
     <div id="ttInstallBox"></div>
   </div>
   <div class="card"><h2>このアプリについて</h2>
-    <p class="note" style="margin-top:0">わが家の家計簿 Phase 1（ビルド b55）<br>
+    <p class="note" style="margin-top:0">わが家の家計簿 Phase 1（ビルド b56）<br>
     取込(PayPay・三井住友銀行CSV)/自動分類/月次ダッシュボード/医療費メモ。<br>
     Phase 2で控除証明書XML取込と税計算、Phase 3でふるさと納税シミュレーションと医療費集計フォーム(Excel)出力を予定。</p></div>`;
   const drawRules=()=>{
