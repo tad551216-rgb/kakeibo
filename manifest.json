@@ -19,5 +19,12 @@
       "sizes": "512x512",
       "type": "image/png"
     }
-  ]
+  ],
+  "related_applications": [
+    {
+      "platform": "webapp",
+      "url": "https://tad551216-rgb.github.io/kakeibo/manifest.json"
+    }
+  ],
+  "prefer_related_applications": false
 }
