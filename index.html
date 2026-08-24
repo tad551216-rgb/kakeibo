@@ -2074,7 +2074,7 @@ async function renderSettings(){
     <div id="ttInstallBox"></div>
   </div>
   <div class="card"><h2>このアプリについて</h2>
-    <p class="note" style="margin-top:0">わが家の家計簿 Phase 1（ビルド b57）<br>
+    <p class="note" style="margin-top:0">わが家の家計簿 Phase 1（ビルド b65）<br>
     取込(PayPay・三井住友銀行CSV)/自動分類/月次ダッシュボード/医療費メモ。<br>
     Phase 2で控除証明書XML取込と税計算、Phase 3でふるさと納税シミュレーションと医療費集計フォーム(Excel)出力を予定。</p></div>`;
   const drawRules=()=>{
@@ -2117,9 +2117,16 @@ async function renderSettings(){
     alert(`${n}件の分類を更新しました(手動で確定済みの明細は変更しません)`);
   };
   el("bkExport").onclick=async()=>{
-    const data={ver:2,exported:new Date().toISOString(),
+    // meta は端末固有の状態(mig*/seeded*/importLog)を除き、
+    // 引き継ぐ価値のあるもの(カード未払金の内訳・カテゴリ設定)だけを書き出す
+    const metaKeep=(await tall("meta")).filter(x=>{
+      const k=String(x.k);
+      return k.startsWith("cardbill:") || k==="catCustom";
+    });
+    const data={ver:3,exported:new Date().toISOString(),
       tx:await tall("tx"),rules:await tall("rules"),
-      accounts:await tall("accounts"),bal:await tall("bal")};
+      accounts:await tall("accounts"),bal:await tall("bal"),
+      meta:metaKeep};
     const blob=new Blob([JSON.stringify(data)],{type:"application/json"});
     const a=document.createElement("a");
     a.href=URL.createObjectURL(blob);
@@ -2155,8 +2162,31 @@ async function renderSettings(){
         const rec={...b,aid:newAid,bid:`${b.month}:${newAid}`};
         await tput("bal",rec);
       }
+      // meta: カード未払金の内訳とカテゴリ設定を復元(ver3以降のバックアップのみ)
+      let nCard=0;
+      const cardMonths=new Set();
+      for(const x of (data.meta||[])){
+        const k=String(x.k);
+        if(k.startsWith("cardbill:")){
+          const cur=(await tget("meta",k))?.v || {};
+          await tput("meta",{k,v:{...cur,...(x.v||{})}}); // 既存の内訳とマージ
+          cardMonths.add(k.slice(9)); nCard++;
+        }else if(k==="catCustom"){
+          await tput("meta",{k,v:x.v});
+        }
+      }
+      // 内訳を入れ直した月は、未払金の残高を内訳の合計に合わせ直す
+      if(cardMonths.size){
+        const liab=await ensureAccount("カード未払金","liability");
+        for(const month of cardMonths){
+          const v=(await tget("meta","cardbill:"+month))?.v || {};
+          const sum=Object.values(v).reduce((a,b)=>a+b,0);
+          await tput("bal",{bid:month+":"+liab.aid,month,aid:liab.aid,amount:sum,auto:true});
+        }
+      }
       await loadRules();
-      alert(`バックアップから ${n}件の明細を読み込みました`);
+      alert(`バックアップから ${n}件の明細を読み込みました`
+        +(nCard?`\nカード未払金の内訳 ${nCard}ヶ月分も復元しました`:""));
       renderTab();
     }catch(err){alert("読み込みに失敗しました: "+err.message);}
   };
