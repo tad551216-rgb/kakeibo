@@ -203,7 +203,9 @@ h2.sec{font-size:0.875rem;margin:18px 4px 8px;color:var(--ink);}
   window.ttState = ld();
   window.ttSave = function(){ try{ localStorage.setItem(DK, JSON.stringify(window.ttState)); }catch(e){} };
   window.ttApply = function(withRedraw){
-    document.body.style.setProperty('--basefs', (16*window.ttState.scale/100)+'px');
+    /* rem は html(ルート)の font-size 基準。body に設定すると rem 指定の文字が
+       いっさい追従しないため、必ず documentElement 側へ設定すること。 */
+    document.documentElement.style.setProperty('--basefs', (16*window.ttState.scale/100)+'px');
     document.body.style.fontWeight = window.ttState.weight;
     document.documentElement.style.setProperty('--tt-maxw', (window.ttState.device==='tablet'?940:680)+'px');
     if(withRedraw && typeof renderTab==='function' && document.getElementById('view')) renderTab();
@@ -752,6 +754,45 @@ async function ensureAccount(name,kind){
 }
 
 /* ---------- ユーティリティ ---------- */
+/* ---------- ビルド番号と更新チェック (b67) ---------- */
+const APP_BUILD = "b67";
+async function checkForUpdate(){
+  const box = el("updStatus"), btn = el("btnUpdChk");
+  const say = (m,c)=>{ if(box){ box.textContent = m; box.style.color = c || "var(--muted)"; } };
+  if(btn) btn.disabled = true;
+  say("確認中…");
+  try{
+    // Service Worker 自体の更新も促す
+    if("serviceWorker" in navigator){
+      const reg = await navigator.serviceWorker.getRegistration();
+      if(reg) await reg.update();
+    }
+    // 公開中の index.html からビルド番号を読む(HTTPキャッシュを迂回)
+    const res = await fetch("./index.html?_=" + Date.now(), {cache:"no-store"});
+    if(!res.ok) throw new Error("HTTP " + res.status);
+    const m = (await res.text()).match(/const APP_BUILD\s*=\s*"([^"]+)"/);
+    const remote = m && m[1];
+    if(!remote){
+      say("バージョンを確認できませんでした。");
+    }else if(remote === APP_BUILD){
+      say("最新です（ビルド " + APP_BUILD + "）。");
+    }else{
+      say("新しいビルド " + remote + " があります。", "var(--expense)");
+      if(confirm("新しいバージョン（ビルド " + remote + "）があります。\n今すぐ更新しますか？\n\n※取込や入力の途中の場合は、終えてから更新してください。\n保存済みのデータは消えません。")){
+        try{
+          const ks = await caches.keys();
+          await Promise.all(ks.filter(k=>k.startsWith("tt:kakeibo:")).map(k=>caches.delete(k)));
+        }catch(e){}
+        location.reload();
+        return;
+      }
+    }
+  }catch(e){
+    say("確認できませんでした（オフラインの可能性があります）。");
+  }
+  if(btn) btn.disabled = false;
+}
+
 const yen = n => "¥" + Math.round(n).toLocaleString("ja-JP");
 function fnv(str){ // 簡易ハッシュ(重複判定用)
   let h=0x811c9dc5;
@@ -1380,22 +1421,64 @@ function drawDonut(canvas, items, centerLabel, centerValue){
   ctx.fillStyle="#1B2A4A";ctx.font=`700 ${17*k}px -apple-system,'Hiragino Sans'`;
   ctx.fillText(centerValue,cx,cy+13);
 }
-function drawBars(canvas, labels, incs, exps){
+/* 当月(ローカル時刻)。toISOString はUTCなので月初の朝にずれる。 */
+function curMonth(){
+  const d=new Date();
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;
+}
+function drawBars(canvas, labels, incs, exps, months){
   const dpr=window.devicePixelRatio||1;
   const w=canvas.clientWidth, h=170;
   canvas.width=w*dpr;canvas.height=h*dpr;canvas.style.height=h+"px";
   const ctx=canvas.getContext("2d");ctx.scale(dpr,dpr);
   const max=Math.max(1,...incs,...exps);
   const n=labels.length, slot=w/n, bw=Math.min(16,slot/3.2);
-  const base=h-22, top=14;
+  const base=h-22, top=30;   /* top は右上の平均値表示ぶんの余白 */
   const _fs=parseFloat(getComputedStyle(document.body).getPropertyValue("--basefs"))||16;
-  ctx.font=`${10*(_fs/16)}px -apple-system,'Hiragino Sans'`;ctx.textAlign="center";
+  const fs=10*(_fs/16);
+  ctx.font=`${fs}px -apple-system,'Hiragino Sans'`;ctx.textAlign="center";
   for(let i=0;i<n;i++){
     const x=slot*i+slot/2;
     const ih=(incs[i]/max)*(base-top), eh=(exps[i]/max)*(base-top);
     ctx.fillStyle="#2E7D5B";ctx.fillRect(x-bw-1.5,base-ih,bw,ih);
     ctx.fillStyle="#BF4E3C";ctx.fillRect(x+1.5,base-eh,bw,eh);
     ctx.fillStyle="#8A8F98";ctx.fillText(labels[i],x,h-7);
+  }
+  /* 平均線 ── 年金のように隔月で入る収入があると棒が上下して水準が読めないため、
+     平均を破線で重ねます。集計は「前月まで」。まだ締まっていない当月と、
+     収入も支出も0の月(未到来・データなし)は分母から外します。 */
+  const thisMonth=curMonth();
+  const live=[];
+  for(let i=0;i<n;i++){
+    if(months && months[i] && months[i]>=thisMonth) continue;   /* 当月以降は除外 */
+    if(incs[i]>0||exps[i]>0) live.push(i);
+  }
+  if(live.length){
+    const avg=a=>live.reduce((s,i)=>s+(a[i]||0),0)/live.length;
+    const aInc=avg(incs), aExp=avg(exps);
+    const dash=(v,color)=>{
+      const y=base-(v/max)*(base-top);
+      ctx.save();
+      ctx.strokeStyle=color;ctx.lineWidth=1.5;ctx.setLineDash([5,3]);
+      ctx.beginPath();ctx.moveTo(0,y+0.5);ctx.lineTo(w,y+0.5);ctx.stroke();
+      ctx.restore();
+    };
+    dash(aInc,"#2E7D5B");
+    dash(aExp,"#BF4E3C");
+    /* 右上に金額を2行で表示(線の上には書かない) */
+    ctx.save();
+    ctx.textAlign="right";
+    const row=(v,color,label,y)=>{
+      const txt=label+" "+yen(v);
+      ctx.fillStyle=color;ctx.fillText(txt,w-2,y);
+      const tw=ctx.measureText(txt).width;
+      ctx.strokeStyle=color;ctx.lineWidth=1.5;ctx.setLineDash([4,2.5]);
+      ctx.beginPath();ctx.moveTo(w-tw-16,y-fs/2+1);ctx.lineTo(w-tw-4,y-fs/2+1);ctx.stroke();
+      ctx.setLineDash([]);
+    };
+    row(aInc,"#2E7D5B","平均収入",fs+1);
+    row(aExp,"#BF4E3C","平均支出",fs*2+4);
+    ctx.restore();
   }
   ctx.strokeStyle="#E3E6E0";ctx.beginPath();ctx.moveTo(0,base+0.5);ctx.lineTo(w,base+0.5);ctx.stroke();
 }
@@ -1428,6 +1511,172 @@ function yearOptions(current, availYears){
 }
 
 /* ---------- ホーム ---------- */
+/* ---------- カテゴリー別の推移 (b66) ----------
+   ・集計は sumMonth と同じ条件(type==="expense"/"income")なので
+     振替(対象外)は自動的に除外され、上のカードの数字と必ず一致する。
+   ・基準日は t.date(発生日/利用日)。
+   ・依存ライブラリなし。SVGを組み立てるだけ。                      */
+const CT_OTHER = "他";
+const CT_OTHER_COLOR = "#7A8699";
+
+function catTrendData(txs, months, topN){
+  topN = topN || 5;
+  const idx = {}; months.forEach((m,i)=>{ idx[m] = i; });
+  const zero = () => months.map(()=>0);
+  const byCat = {}, inc = zero(), exp = zero();
+  for(const t of txs){
+    const i = idx[monthOf(t.date)];
+    if(i === undefined) continue;
+    if(t.type === "income"){ inc[i] += t.amount; continue; }
+    if(t.type !== "expense") continue;              // 振替(対象外)はここで落ちる
+    const c = t.category || "その他支出";
+    (byCat[c] || (byCat[c] = zero()))[i] += t.amount;
+    exp[i] += t.amount;
+  }
+  const ranked = Object.keys(byCat).map(name=>({
+    name, series: byCat[name],
+    total: byCat[name].reduce((a,b)=>a+b,0),
+    color: (CAT[name]||{}).color || "#9AA0A6"
+  })).sort((a,b)=>b.total-a.total);
+
+  const cats = ranked.slice(0, topN), rest = ranked.slice(topN);
+  if(rest.length){
+    const s = months.map((_,i)=>rest.reduce((a,r)=>a+r.series[i],0));
+    cats.push({ name: CT_OTHER, series: s, total: s.reduce((a,b)=>a+b,0),
+                color: CT_OTHER_COLOR, rest: rest.map(r=>r.name) });
+  }
+  return { months, cats, inc, exp, net: months.map((_,i)=>inc[i]-exp[i]) };
+}
+
+function ctYen(v){
+  const a = Math.abs(v), s = v<0 ? "-" : "";
+  if(a >= 100000) return s + Math.round(a/10000) + "万";
+  if(a >= 10000)  return s + (a/10000).toFixed(1) + "万";
+  return s + Math.round(a).toLocaleString("ja-JP");
+}
+function ctNice(v){
+  if(!(v>0)) return 1;
+  const st = Math.pow(10, Math.floor(Math.log10(v)));
+  for(const c of [1,1.5,2,2.5,3,4,5,7.5,10]) if(c*st >= v) return c*st;
+  return 10*st;
+}
+
+function catTrendSVG(d, sel){
+  const n = d.months.length;
+  const W = 360, PL = 34, PR = 6;
+  const TOP = 10, MH = 150, LAB = TOP + MH + 15;
+  const NT = TOP + MH + 28, NH = 44, H = NT + NH + 12;
+  const plotW = W - PL - PR, slot = plotW / n;
+  const barW = Math.min(24, slot * 0.46);
+  const incW = Math.max(4, barW * 0.40);
+  const gap  = n > 8 ? 2 : 4;
+  const gw   = barW + gap + incW;
+  const dense = n > 8;
+
+  const maxV = ctNice(Math.max(...d.exp, ...d.inc, 1));
+  const y = v => TOP + MH - (v/maxV)*MH;
+  const cx = i => PL + slot*i + slot/2;
+  const o = [];
+
+  o.push(`<svg viewBox="0 0 ${W} ${H}" width="100%" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="カテゴリー別の推移">`);
+
+  for(let g=0; g<=4; g++){
+    const v = maxV*g/4, gy = y(v);
+    o.push(`<line x1="${PL}" y1="${gy.toFixed(1)}" x2="${W-PR}" y2="${gy.toFixed(1)}" stroke="currentColor" stroke-opacity="${g?0.10:0.30}"/>`);
+    o.push(`<text x="${PL-4}" y="${(gy+3.5).toFixed(1)}" text-anchor="end" font-size="9" fill="currentColor" fill-opacity="0.55">${g?ctYen(v):"0"}</text>`);
+  }
+
+  for(let i=0; i<n; i++){
+    const gx = cx(i) - gw/2;
+    const on = (sel.month === i);
+    if(on) o.push(`<rect x="${(PL+slot*i).toFixed(1)}" y="${TOP-6}" width="${slot.toFixed(1)}" height="${MH+12}" fill="currentColor" fill-opacity="0.05" rx="4"/>`);
+    let acc = 0;
+    d.cats.forEach((c,ci)=>{
+      const v = c.series[i]; if(!v) return;
+      const y0 = y(acc+v), y1 = y(acc);
+      const faded = (sel.cat != null && sel.cat !== ci);
+      o.push(`<rect x="${gx.toFixed(1)}" y="${y0.toFixed(1)}" width="${barW.toFixed(1)}" height="${Math.max(0.8,y1-y0).toFixed(1)}" fill="${c.color}" fill-opacity="${faded?0.22:1}"/>`);
+      acc += v;
+    });
+    const iy = y(d.inc[i]);
+    o.push(`<rect x="${(gx+barW+gap).toFixed(1)}" y="${iy.toFixed(1)}" width="${incW.toFixed(1)}" height="${Math.max(0.8,y(0)-iy).toFixed(1)}" style="fill:var(--income);fill-opacity:${sel.cat!=null?0.08:0.25};stroke:var(--income);stroke-opacity:${sel.cat!=null?0.3:0.85}"/>`);
+    o.push(`<text x="${cx(i).toFixed(1)}" y="${LAB}" text-anchor="middle" font-size="${dense?9:10}" fill="currentColor" fill-opacity="${on?1:0.6}" font-weight="${on?700:400}">${Number(d.months[i].slice(5))}月</text>`);
+  }
+
+  const maxN = Math.max(...d.net, 0), minN = Math.min(...d.net, 0);
+  const range = (maxN - minN) || 1;
+  const zeroY = NT + NH*(maxN/range);
+  const ny = v => NT + NH*((maxN-v)/range);
+  o.push(`<text x="${PL-4}" y="${NT+8}" text-anchor="end" font-size="9" fill="currentColor" fill-opacity="0.5">収支</text>`);
+  o.push(`<line x1="${PL}" y1="${zeroY.toFixed(1)}" x2="${W-PR}" y2="${zeroY.toFixed(1)}" stroke="currentColor" stroke-opacity="0.30"/>`);
+  for(let i=0;i<n;i++){
+    const v = d.net[i], yy = ny(v);
+    const top = Math.min(yy, zeroY), h = Math.max(1, Math.abs(yy-zeroY));
+    const on = (sel.month === i);
+    const col = v<0 ? "var(--expense)" : "var(--income)";
+    const bw = Math.min(22, slot*0.5);
+    o.push(`<rect x="${(cx(i)-bw/2).toFixed(1)}" y="${top.toFixed(1)}" width="${bw.toFixed(1)}" height="${h.toFixed(1)}" style="fill:${col};fill-opacity:${on?1:0.75}" rx="1"/>`);
+    if(!dense) o.push(`<text x="${cx(i).toFixed(1)}" y="${(v<0?yy+10:yy-3).toFixed(1)}" text-anchor="middle" font-size="8.5" fill="currentColor" fill-opacity="${on?0.9:0.6}">${ctYen(v)}</text>`);
+  }
+
+  for(let i=0;i<n;i++)
+    o.push(`<rect data-ctm="${i}" x="${(PL+slot*i).toFixed(1)}" y="0" width="${slot.toFixed(1)}" height="${H}" fill="transparent" style="cursor:pointer"/>`);
+
+  o.push(`</svg>`);
+  return o.join("");
+}
+
+function catTrendLegend(d, sel){
+  const chip = (bg, label, attr, on) =>
+    `<button type="button" ${attr} style="display:inline-flex;align-items:center;gap:5px;border:0;border-radius:999px;padding:4px 9px;font:inherit;font-size:11px;line-height:1;color:inherit;background:rgba(138,143,152,.14);opacity:${on?1:.4}">
+       <span style="width:9px;height:9px;border-radius:2px;background:${bg}"></span>${label}</button>`;
+  const chips = d.cats.map((c,i)=>
+    chip(c.color, esc(c.name==="他" && c.rest ? "他("+c.rest.length+")" : c.name), `data-ctc="${i}"`, sel.cat==null||sel.cat===i));
+  chips.push(`<span style="display:inline-flex;align-items:center;gap:5px;padding:4px 9px;font-size:11px;color:var(--muted)">
+      <span style="width:9px;height:9px;border-radius:2px;border:1px solid var(--income);background:rgba(46,125,91,.25)"></span>収入</span>`);
+  return `<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px">${chips.join("")}</div>`;
+}
+
+function catTrendDetail(d, sel){
+  if(sel.month == null)
+    return `<div class="note" style="margin-top:8px">月をタップすると内訳が出ます。</div>`;
+  const i = sel.month, net = d.net[i];
+  const rows = d.cats.filter(c=>c.series[i]>0).sort((a,b)=>b.series[i]-a.series[i]).map(c=>{
+    const pct = d.exp[i] ? c.series[i]/d.exp[i]*100 : 0;
+    return `<div style="display:flex;align-items:center;gap:7px;padding:2px 0;font-size:.8125rem">
+      <span style="width:9px;height:9px;border-radius:2px;background:${c.color};flex:none"></span>
+      <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(c.name)}</span>
+      <span style="color:var(--muted);font-size:11px">${pct.toFixed(0)}%</span>
+      <span class="num">${yen(c.series[i])}</span></div>`;
+  }).join("");
+  return `<div style="margin-top:10px;border-top:1px solid var(--line);padding-top:8px">
+    <div class="note" style="display:flex;justify-content:space-between;margin:0 0 6px">
+      <span>${d.months[i].replace("-","年")}月</span>
+      <span>収入 ${yen(d.inc[i])}　支出 ${yen(d.exp[i])}　<b style="color:${net<0?'var(--expense)':'var(--income)'}">収支 ${net>=0?"+":""}${yen(net)}</b></span>
+    </div>${rows || `<div class="note">支出の記録がありません</div>`}</div>`;
+}
+
+function mountCatTrend(txs, months){
+  const host = el("catTrend"); if(!host) return;
+  const d = catTrendData(txs, months, 5);
+  if(!d.cats.length){ host.innerHTML = `<div class="empty">この期間の支出はありません</div>`; return; }
+  if(S.ctMonth === undefined || S.ctMonth > months.length-1) S.ctMonth = months.length-1;
+  if(S.ctCat === undefined) S.ctCat = null;
+  function draw(){
+    const sel = { month: S.ctMonth, cat: S.ctCat };
+    host.innerHTML = catTrendSVG(d, sel) + catTrendLegend(d, sel) + catTrendDetail(d, sel);
+    host.querySelectorAll("[data-ctm]").forEach(r=>{
+      r.onclick = ()=>{ const m = Number(r.getAttribute("data-ctm"));
+        S.ctMonth = (S.ctMonth === m ? null : m); draw(); };
+    });
+    host.querySelectorAll("[data-ctc]").forEach(b=>{
+      b.onclick = ()=>{ const c = Number(b.getAttribute("data-ctc"));
+        S.ctCat = (S.ctCat === c ? null : c); draw(); };
+    });
+  }
+  draw();
+}
+
 async function renderHome(){
   const txs=await allTx();
   if(!S.month) S.month=latestMonth(txs);
@@ -1517,6 +1766,12 @@ async function renderHome(){
   <div class="card">
     <h2>${trendLabel}</h2>
     <canvas id="bars"></canvas>
+    ${trendMonths.some(m=>m>=curMonth())?`<div class="note">破線は平均(前月までの実績。当月は集計に含みません)。</div>`:""}
+  </div>
+  <div class="card">
+    <h2>カテゴリー別の推移(${trendMonths.length}ヶ月)</h2>
+    <div id="catTrend"></div>
+    <div class="note">支出を上位5カテゴリ＋「他」で積み上げ、細い枠が収入、下段が収支差です。振替(対象外)は含みません。</div>
   </div>
   <div class="card">
     <h2>${year}年 医療費の累計(確定申告メモ)</h2>
@@ -1546,7 +1801,8 @@ async function renderHome(){
   el("cellInc").onclick=()=>{S.homeMode="income";renderHome();};
   el("cellExp").onclick=()=>{S.homeMode="expense";renderHome();};
   if(txs.length&&dispItems.length) drawDonut(el("donut"),dispItems,mode==="income"?"収入合計":"支出合計",yen(dispTotal));
-  drawBars(el("bars"),trendMonths.map(m=>Number(m.slice(5))+"月"),incs,exps);
+  drawBars(el("bars"),trendMonths.map(m=>Number(m.slice(5))+"月"),incs,exps,trendMonths);
+  mountCatTrend(txs,trendMonths);
 }
 
 /* ---------- 明細 ---------- */
@@ -2024,10 +2280,16 @@ async function renderSettings(){
     <button type="button" onclick="ttBillClean()" style="width:100%;margin-top:8px;padding:9px;border-radius:8px;border:1.5px solid #c9472e;background:#fff;color:#c9472e;font-size:13px;">未払金の内訳を整理する</button>
     <div id="ttDupOut"></div>
   </div>
+  <div class="card">
+    <h2>アプリとして使う</h2>
+    <div id="ttInstallBox"></div>
+  </div>
   <div class="card"><h2>このアプリについて</h2>
-    <p class="note" style="margin-top:0">わが家の家計簿 Phase 1（ビルド b51）<br>
+    <p class="note" style="margin-top:0">わが家の家計簿 Phase 1（ビルド ${APP_BUILD}）<br>
     取込(PayPay・三井住友銀行CSV)/自動分類/月次ダッシュボード/医療費メモ。<br>
-    Phase 2で控除証明書XML取込と税計算、Phase 3でふるさと納税シミュレーションと医療費集計フォーム(Excel)出力を予定。</p></div>`;
+    Phase 2で控除証明書XML取込と税計算、Phase 3でふるさと納税シミュレーションと医療費集計フォーム(Excel)出力を予定。</p>
+    <button type="button" id="btnUpdChk" style="width:100%;margin-top:4px;padding:9px;border-radius:8px;border:1.5px solid var(--accent);background:#fff;color:var(--accent);font-size:13px;">今すぐ更新を確認</button>
+    <div id="updStatus" class="note" style="margin-top:6px"></div></div>`;
   const drawRules=()=>{
     if(!el("ruleList")) return;
     el("ruleList").innerHTML=rulesCache.map(r=>`
@@ -2040,6 +2302,7 @@ async function renderSettings(){
   };
   window.ttRenderCard();
   // 開閉トグル
+  if(el("btnUpdChk")) el("btnUpdChk").onclick=checkForUpdate;
   el("catMgmtToggle").onclick=()=>{S.openCatMgmt=!S.openCatMgmt;renderSettings();};
   el("rulesToggle").onclick=()=>{S.openRules=!S.openRules;renderSettings();};
   // カテゴリ管理(開いているときだけ)
@@ -2068,9 +2331,16 @@ async function renderSettings(){
     alert(`${n}件の分類を更新しました(手動で確定済みの明細は変更しません)`);
   };
   el("bkExport").onclick=async()=>{
-    const data={ver:2,exported:new Date().toISOString(),
+    // meta は端末固有の状態(mig*/seeded*/importLog)を除き、
+    // 引き継ぐ価値のあるもの(カード未払金の内訳・カテゴリ設定)だけを書き出す
+    const metaKeep=(await tall("meta")).filter(x=>{
+      const k=String(x.k);
+      return k.startsWith("cardbill:") || k==="catCustom";
+    });
+    const data={ver:3,exported:new Date().toISOString(),
       tx:await tall("tx"),rules:await tall("rules"),
-      accounts:await tall("accounts"),bal:await tall("bal")};
+      accounts:await tall("accounts"),bal:await tall("bal"),
+      meta:metaKeep};
     const blob=new Blob([JSON.stringify(data)],{type:"application/json"});
     const a=document.createElement("a");
     a.href=URL.createObjectURL(blob);
@@ -2106,8 +2376,31 @@ async function renderSettings(){
         const rec={...b,aid:newAid,bid:`${b.month}:${newAid}`};
         await tput("bal",rec);
       }
+      // meta: カード未払金の内訳とカテゴリ設定を復元(ver3以降のバックアップのみ)
+      let nCard=0;
+      const cardMonths=new Set();
+      for(const x of (data.meta||[])){
+        const k=String(x.k);
+        if(k.startsWith("cardbill:")){
+          const cur=(await tget("meta",k))?.v || {};
+          await tput("meta",{k,v:{...cur,...(x.v||{})}}); // 既存の内訳とマージ
+          cardMonths.add(k.slice(9)); nCard++;
+        }else if(k==="catCustom"){
+          await tput("meta",{k,v:x.v});
+        }
+      }
+      // 内訳を入れ直した月は、未払金の残高を内訳の合計に合わせ直す
+      if(cardMonths.size){
+        const liab=await ensureAccount("カード未払金","liability");
+        for(const month of cardMonths){
+          const v=(await tget("meta","cardbill:"+month))?.v || {};
+          const sum=Object.values(v).reduce((a,b)=>a+b,0);
+          await tput("bal",{bid:month+":"+liab.aid,month,aid:liab.aid,amount:sum,auto:true});
+        }
+      }
       await loadRules();
-      alert(`バックアップから ${n}件の明細を読み込みました`);
+      alert(`バックアップから ${n}件の明細を読み込みました`
+        +(nCard?`\nカード未払金の内訳 ${nCard}ヶ月分も復元しました`:""));
       renderTab();
     }catch(err){alert("読み込みに失敗しました: "+err.message);}
   };
@@ -2726,5 +3019,117 @@ el("fab").onclick=openManualAdd;
   }
 })();
 </script>
+<!-- === つくる手帖 共通：アプリのインストール（自動設置） ===
+     設定画面に <div id="ttInstallBox"></div> があればその中に描き、
+     無ければインストール可能なときだけ画面下部に帯を出します。
+     HTMLの他の場所に手を入れる必要はありません。 -->
+<script>
+(function(){
+  var KEY = 'tt-install-dismissed';
+  var deferred = null, known = false, installed = false;
+
+  function isStandalone(){
+    return (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches)
+        || window.navigator.standalone === true;
+  }
+  function isIOS(){
+    return /iPad|iPhone|iPod/.test(navigator.userAgent)
+        || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  }
+  function dismissed(){ try{ return localStorage.getItem(KEY) === '1'; }catch(e){ return false; } }
+  function dismiss(){ try{ localStorage.setItem(KEY, '1'); }catch(e){} }
+
+  /* Chromeのタブから見ていても、インストール済みかどうかを確定的に取る。
+     manifest.json の related_applications に自己参照があることが前提。 */
+  function probe(){
+    if(!navigator.getInstalledRelatedApps){ render(); return; }
+    navigator.getInstalledRelatedApps().then(function(apps){
+      installed = apps.some(function(a){ return a.platform === 'webapp'; });
+      known = true; render();
+    }).catch(function(){ render(); });
+  }
+
+  function doInstall(after){
+    var ev = deferred; if(!ev) return;
+    deferred = null;
+    try{
+      ev.prompt();
+      ev.userChoice.then(function(res){ after(res && res.outcome === 'accepted'); });
+    }catch(err){ after(false); }
+  }
+
+  /* --- 設定画面の中に描く --- */
+  function renderBox(box){
+    if(isStandalone()){
+      box.innerHTML = '<p class="note" style="margin:0">インストール済みです。ホーム画面のアイコンから起動しています。</p>';
+      return;
+    }
+    if(known && installed && !deferred){
+      box.innerHTML = '<p class="note" style="margin:0">インストール済みです。ホーム画面のアイコンから開いてください。</p>';
+      return;
+    }
+    if(deferred){
+      box.innerHTML = '<p class="note" style="margin-top:0">ホーム画面にアイコンを置き、ブラウザの枠なしで起動できます。</p>'
+        + '<button type="button" id="ttInstallBtn" style="width:100%;padding:10px;border-radius:8px;border:1.5px solid #2c5077;background:#2c5077;color:#fff;font-size:14px;">アプリとしてインストール</button>';
+      document.getElementById('ttInstallBtn').onclick = function(){
+        doInstall(function(ok){
+          box.innerHTML = '<p class="note" style="margin:0">' + (ok
+            ? 'インストールしました。ホーム画面のアイコンから起動してください。'
+            : 'インストールを中止しました。やり直すには、この画面を再読み込みしてください。') + '</p>';
+        });
+      };
+      return;
+    }
+    if(isIOS()){
+      box.innerHTML = '<p class="note" style="margin:0">iPhone・iPadでは、Safariの共有ボタン（□に↑）から「ホーム画面に追加」を選んでください。</p>';
+      return;
+    }
+    box.innerHTML = '<p class="note" style="margin-top:0">'
+      + (known ? 'このアプリはまだインストールされていませんが、' : '')
+      + 'ブラウザからインストールの合図が届いていません。</p>'
+      + '<p class="note" style="margin:6px 0 0">・LINEやメールのアプリ内ブラウザで開いている（Chromeで開き直してください）<br>'
+      + '・ページを開いた直後で判定が終わっていない（再読み込みしてください）<br>'
+      + '・対応していないブラウザを使っている</p>';
+  }
+
+  /* --- 設定画面が無いアプリ向けの帯 --- */
+  function renderBar(){
+    var bar = document.getElementById('ttInstallBar');
+    if(!deferred || isStandalone() || dismissed()){ if(bar) bar.remove(); return; }
+    if(bar) return;
+    bar = document.createElement('div');
+    bar.id = 'ttInstallBar';
+    bar.style.cssText = 'position:fixed;left:0;right:0;bottom:0;z-index:9999;'
+      + 'display:flex;align-items:center;gap:10px;'
+      + 'padding:10px 12px calc(10px + env(safe-area-inset-bottom));'
+      + 'background:#fff;border-top:1px solid #dcdfe4;box-shadow:0 -2px 10px rgba(0,0,0,.08);'
+      + 'font-family:-apple-system,"Hiragino Sans","Noto Sans JP",sans-serif;font-size:14px;color:#1B2A4A;';
+    bar.innerHTML = '<span style="flex:1;line-height:1.4;">ホーム画面に追加して、アプリとして使えます。</span>'
+      + '<button type="button" id="ttBarYes" style="padding:8px 14px;border-radius:8px;border:0;background:#2c5077;color:#fff;font-size:14px;white-space:nowrap;">インストール</button>'
+      + '<button type="button" id="ttBarNo" aria-label="閉じる" style="padding:8px 10px;border-radius:8px;border:0;background:transparent;color:#8A8F98;font-size:18px;line-height:1;">×</button>';
+    document.body.appendChild(bar);
+    document.getElementById('ttBarYes').onclick = function(){
+      doInstall(function(){ var b = document.getElementById('ttInstallBar'); if(b) b.remove(); });
+    };
+    document.getElementById('ttBarNo').onclick = function(){ dismiss(); bar.remove(); };
+  }
+
+  function render(){
+    var box = document.getElementById('ttInstallBox');
+    if(box){ renderBox(box); }
+    if(document.body) renderBar();
+  }
+
+  window.addEventListener('beforeinstallprompt', function(e){ e.preventDefault(); deferred = e; render(); });
+  window.addEventListener('appinstalled', function(){ deferred = null; installed = true; known = true; render(); });
+  window.ttRenderInstallCard = render;
+  /* 設定画面を組み直したあとに自動で追従する */
+  document.addEventListener('click', function(){ setTimeout(render, 0); });
+
+  if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', probe);
+  else probe();
+})();
+</script>
+
 </body>
 </html>
