@@ -203,9 +203,7 @@ h2.sec{font-size:0.875rem;margin:18px 4px 8px;color:var(--ink);}
   window.ttState = ld();
   window.ttSave = function(){ try{ localStorage.setItem(DK, JSON.stringify(window.ttState)); }catch(e){} };
   window.ttApply = function(withRedraw){
-    /* rem は html(ルート)の font-size 基準。body に設定すると rem 指定の文字が
-       いっさい追従しないため、必ず documentElement 側へ設定すること。 */
-    document.documentElement.style.setProperty('--basefs', (16*window.ttState.scale/100)+'px');
+    document.body.style.setProperty('--basefs', (16*window.ttState.scale/100)+'px');
     document.body.style.fontWeight = window.ttState.weight;
     document.documentElement.style.setProperty('--tt-maxw', (window.ttState.device==='tablet'?940:680)+'px');
     if(withRedraw && typeof renderTab==='function' && document.getElementById('view')) renderTab();
@@ -1382,64 +1380,22 @@ function drawDonut(canvas, items, centerLabel, centerValue){
   ctx.fillStyle="#1B2A4A";ctx.font=`700 ${17*k}px -apple-system,'Hiragino Sans'`;
   ctx.fillText(centerValue,cx,cy+13);
 }
-/* 当月(ローカル時刻)。toISOString はUTCなので月初の朝にずれる。 */
-function curMonth(){
-  const d=new Date();
-  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;
-}
-function drawBars(canvas, labels, incs, exps, months){
+function drawBars(canvas, labels, incs, exps){
   const dpr=window.devicePixelRatio||1;
   const w=canvas.clientWidth, h=170;
   canvas.width=w*dpr;canvas.height=h*dpr;canvas.style.height=h+"px";
   const ctx=canvas.getContext("2d");ctx.scale(dpr,dpr);
   const max=Math.max(1,...incs,...exps);
   const n=labels.length, slot=w/n, bw=Math.min(16,slot/3.2);
-  const base=h-22, top=30;   /* top は右上の平均値表示ぶんの余白 */
+  const base=h-22, top=14;
   const _fs=parseFloat(getComputedStyle(document.body).getPropertyValue("--basefs"))||16;
-  const fs=10*(_fs/16);
-  ctx.font=`${fs}px -apple-system,'Hiragino Sans'`;ctx.textAlign="center";
+  ctx.font=`${10*(_fs/16)}px -apple-system,'Hiragino Sans'`;ctx.textAlign="center";
   for(let i=0;i<n;i++){
     const x=slot*i+slot/2;
     const ih=(incs[i]/max)*(base-top), eh=(exps[i]/max)*(base-top);
     ctx.fillStyle="#2E7D5B";ctx.fillRect(x-bw-1.5,base-ih,bw,ih);
     ctx.fillStyle="#BF4E3C";ctx.fillRect(x+1.5,base-eh,bw,eh);
     ctx.fillStyle="#8A8F98";ctx.fillText(labels[i],x,h-7);
-  }
-  /* 平均線 ── 年金のように隔月で入る収入があると棒が上下して水準が読めないため、
-     平均を破線で重ねます。集計は「前月まで」。まだ締まっていない当月と、
-     収入も支出も0の月(未到来・データなし)は分母から外します。 */
-  const thisMonth=curMonth();
-  const live=[];
-  for(let i=0;i<n;i++){
-    if(months && months[i] && months[i]>=thisMonth) continue;   /* 当月以降は除外 */
-    if(incs[i]>0||exps[i]>0) live.push(i);
-  }
-  if(live.length){
-    const avg=a=>live.reduce((s,i)=>s+(a[i]||0),0)/live.length;
-    const aInc=avg(incs), aExp=avg(exps);
-    const dash=(v,color)=>{
-      const y=base-(v/max)*(base-top);
-      ctx.save();
-      ctx.strokeStyle=color;ctx.lineWidth=1.5;ctx.setLineDash([5,3]);
-      ctx.beginPath();ctx.moveTo(0,y+0.5);ctx.lineTo(w,y+0.5);ctx.stroke();
-      ctx.restore();
-    };
-    dash(aInc,"#2E7D5B");
-    dash(aExp,"#BF4E3C");
-    /* 右上に金額を2行で表示(線の上には書かない) */
-    ctx.save();
-    ctx.textAlign="right";
-    const row=(v,color,label,y)=>{
-      const txt=label+" "+yen(v);
-      ctx.fillStyle=color;ctx.fillText(txt,w-2,y);
-      const tw=ctx.measureText(txt).width;
-      ctx.strokeStyle=color;ctx.lineWidth=1.5;ctx.setLineDash([4,2.5]);
-      ctx.beginPath();ctx.moveTo(w-tw-16,y-fs/2+1);ctx.lineTo(w-tw-4,y-fs/2+1);ctx.stroke();
-      ctx.setLineDash([]);
-    };
-    row(aInc,"#2E7D5B","平均収入",fs+1);
-    row(aExp,"#BF4E3C","平均支出",fs*2+4);
-    ctx.restore();
   }
   ctx.strokeStyle="#E3E6E0";ctx.beginPath();ctx.moveTo(0,base+0.5);ctx.lineTo(w,base+0.5);ctx.stroke();
 }
@@ -1561,7 +1517,6 @@ async function renderHome(){
   <div class="card">
     <h2>${trendLabel}</h2>
     <canvas id="bars"></canvas>
-    ${trendMonths.some(m=>m>=curMonth())?`<div class="note">破線は平均(前月までの実績。当月は集計に含みません)。</div>`:""}
   </div>
   <div class="card">
     <h2>${year}年 医療費の累計(確定申告メモ)</h2>
@@ -1591,7 +1546,7 @@ async function renderHome(){
   el("cellInc").onclick=()=>{S.homeMode="income";renderHome();};
   el("cellExp").onclick=()=>{S.homeMode="expense";renderHome();};
   if(txs.length&&dispItems.length) drawDonut(el("donut"),dispItems,mode==="income"?"収入合計":"支出合計",yen(dispTotal));
-  drawBars(el("bars"),trendMonths.map(m=>Number(m.slice(5))+"月"),incs,exps,trendMonths);
+  drawBars(el("bars"),trendMonths.map(m=>Number(m.slice(5))+"月"),incs,exps);
 }
 
 /* ---------- 明細 ---------- */
@@ -2069,12 +2024,8 @@ async function renderSettings(){
     <button type="button" onclick="ttBillClean()" style="width:100%;margin-top:8px;padding:9px;border-radius:8px;border:1.5px solid #c9472e;background:#fff;color:#c9472e;font-size:13px;">未払金の内訳を整理する</button>
     <div id="ttDupOut"></div>
   </div>
-  <div class="card">
-    <h2>アプリとして使う</h2>
-    <div id="ttInstallBox"></div>
-  </div>
   <div class="card"><h2>このアプリについて</h2>
-    <p class="note" style="margin-top:0">わが家の家計簿 Phase 1（ビルド b65）<br>
+    <p class="note" style="margin-top:0">わが家の家計簿 Phase 1（ビルド b51）<br>
     取込(PayPay・三井住友銀行CSV)/自動分類/月次ダッシュボード/医療費メモ。<br>
     Phase 2で控除証明書XML取込と税計算、Phase 3でふるさと納税シミュレーションと医療費集計フォーム(Excel)出力を予定。</p></div>`;
   const drawRules=()=>{
@@ -2117,16 +2068,9 @@ async function renderSettings(){
     alert(`${n}件の分類を更新しました(手動で確定済みの明細は変更しません)`);
   };
   el("bkExport").onclick=async()=>{
-    // meta は端末固有の状態(mig*/seeded*/importLog)を除き、
-    // 引き継ぐ価値のあるもの(カード未払金の内訳・カテゴリ設定)だけを書き出す
-    const metaKeep=(await tall("meta")).filter(x=>{
-      const k=String(x.k);
-      return k.startsWith("cardbill:") || k==="catCustom";
-    });
-    const data={ver:3,exported:new Date().toISOString(),
+    const data={ver:2,exported:new Date().toISOString(),
       tx:await tall("tx"),rules:await tall("rules"),
-      accounts:await tall("accounts"),bal:await tall("bal"),
-      meta:metaKeep};
+      accounts:await tall("accounts"),bal:await tall("bal")};
     const blob=new Blob([JSON.stringify(data)],{type:"application/json"});
     const a=document.createElement("a");
     a.href=URL.createObjectURL(blob);
@@ -2162,31 +2106,8 @@ async function renderSettings(){
         const rec={...b,aid:newAid,bid:`${b.month}:${newAid}`};
         await tput("bal",rec);
       }
-      // meta: カード未払金の内訳とカテゴリ設定を復元(ver3以降のバックアップのみ)
-      let nCard=0;
-      const cardMonths=new Set();
-      for(const x of (data.meta||[])){
-        const k=String(x.k);
-        if(k.startsWith("cardbill:")){
-          const cur=(await tget("meta",k))?.v || {};
-          await tput("meta",{k,v:{...cur,...(x.v||{})}}); // 既存の内訳とマージ
-          cardMonths.add(k.slice(9)); nCard++;
-        }else if(k==="catCustom"){
-          await tput("meta",{k,v:x.v});
-        }
-      }
-      // 内訳を入れ直した月は、未払金の残高を内訳の合計に合わせ直す
-      if(cardMonths.size){
-        const liab=await ensureAccount("カード未払金","liability");
-        for(const month of cardMonths){
-          const v=(await tget("meta","cardbill:"+month))?.v || {};
-          const sum=Object.values(v).reduce((a,b)=>a+b,0);
-          await tput("bal",{bid:month+":"+liab.aid,month,aid:liab.aid,amount:sum,auto:true});
-        }
-      }
       await loadRules();
-      alert(`バックアップから ${n}件の明細を読み込みました`
-        +(nCard?`\nカード未払金の内訳 ${nCard}ヶ月分も復元しました`:""));
+      alert(`バックアップから ${n}件の明細を読み込みました`);
       renderTab();
     }catch(err){alert("読み込みに失敗しました: "+err.message);}
   };
@@ -2805,117 +2726,5 @@ el("fab").onclick=openManualAdd;
   }
 })();
 </script>
-<!-- === つくる手帖 共通：アプリのインストール（自動設置） ===
-     設定画面に <div id="ttInstallBox"></div> があればその中に描き、
-     無ければインストール可能なときだけ画面下部に帯を出します。
-     HTMLの他の場所に手を入れる必要はありません。 -->
-<script>
-(function(){
-  var KEY = 'tt-install-dismissed';
-  var deferred = null, known = false, installed = false;
-
-  function isStandalone(){
-    return (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches)
-        || window.navigator.standalone === true;
-  }
-  function isIOS(){
-    return /iPad|iPhone|iPod/.test(navigator.userAgent)
-        || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-  }
-  function dismissed(){ try{ return localStorage.getItem(KEY) === '1'; }catch(e){ return false; } }
-  function dismiss(){ try{ localStorage.setItem(KEY, '1'); }catch(e){} }
-
-  /* Chromeのタブから見ていても、インストール済みかどうかを確定的に取る。
-     manifest.json の related_applications に自己参照があることが前提。 */
-  function probe(){
-    if(!navigator.getInstalledRelatedApps){ render(); return; }
-    navigator.getInstalledRelatedApps().then(function(apps){
-      installed = apps.some(function(a){ return a.platform === 'webapp'; });
-      known = true; render();
-    }).catch(function(){ render(); });
-  }
-
-  function doInstall(after){
-    var ev = deferred; if(!ev) return;
-    deferred = null;
-    try{
-      ev.prompt();
-      ev.userChoice.then(function(res){ after(res && res.outcome === 'accepted'); });
-    }catch(err){ after(false); }
-  }
-
-  /* --- 設定画面の中に描く --- */
-  function renderBox(box){
-    if(isStandalone()){
-      box.innerHTML = '<p class="note" style="margin:0">インストール済みです。ホーム画面のアイコンから起動しています。</p>';
-      return;
-    }
-    if(known && installed && !deferred){
-      box.innerHTML = '<p class="note" style="margin:0">インストール済みです。ホーム画面のアイコンから開いてください。</p>';
-      return;
-    }
-    if(deferred){
-      box.innerHTML = '<p class="note" style="margin-top:0">ホーム画面にアイコンを置き、ブラウザの枠なしで起動できます。</p>'
-        + '<button type="button" id="ttInstallBtn" style="width:100%;padding:10px;border-radius:8px;border:1.5px solid #2c5077;background:#2c5077;color:#fff;font-size:14px;">アプリとしてインストール</button>';
-      document.getElementById('ttInstallBtn').onclick = function(){
-        doInstall(function(ok){
-          box.innerHTML = '<p class="note" style="margin:0">' + (ok
-            ? 'インストールしました。ホーム画面のアイコンから起動してください。'
-            : 'インストールを中止しました。やり直すには、この画面を再読み込みしてください。') + '</p>';
-        });
-      };
-      return;
-    }
-    if(isIOS()){
-      box.innerHTML = '<p class="note" style="margin:0">iPhone・iPadでは、Safariの共有ボタン（□に↑）から「ホーム画面に追加」を選んでください。</p>';
-      return;
-    }
-    box.innerHTML = '<p class="note" style="margin-top:0">'
-      + (known ? 'このアプリはまだインストールされていませんが、' : '')
-      + 'ブラウザからインストールの合図が届いていません。</p>'
-      + '<p class="note" style="margin:6px 0 0">・LINEやメールのアプリ内ブラウザで開いている（Chromeで開き直してください）<br>'
-      + '・ページを開いた直後で判定が終わっていない（再読み込みしてください）<br>'
-      + '・対応していないブラウザを使っている</p>';
-  }
-
-  /* --- 設定画面が無いアプリ向けの帯 --- */
-  function renderBar(){
-    var bar = document.getElementById('ttInstallBar');
-    if(!deferred || isStandalone() || dismissed()){ if(bar) bar.remove(); return; }
-    if(bar) return;
-    bar = document.createElement('div');
-    bar.id = 'ttInstallBar';
-    bar.style.cssText = 'position:fixed;left:0;right:0;bottom:0;z-index:9999;'
-      + 'display:flex;align-items:center;gap:10px;'
-      + 'padding:10px 12px calc(10px + env(safe-area-inset-bottom));'
-      + 'background:#fff;border-top:1px solid #dcdfe4;box-shadow:0 -2px 10px rgba(0,0,0,.08);'
-      + 'font-family:-apple-system,"Hiragino Sans","Noto Sans JP",sans-serif;font-size:14px;color:#1B2A4A;';
-    bar.innerHTML = '<span style="flex:1;line-height:1.4;">ホーム画面に追加して、アプリとして使えます。</span>'
-      + '<button type="button" id="ttBarYes" style="padding:8px 14px;border-radius:8px;border:0;background:#2c5077;color:#fff;font-size:14px;white-space:nowrap;">インストール</button>'
-      + '<button type="button" id="ttBarNo" aria-label="閉じる" style="padding:8px 10px;border-radius:8px;border:0;background:transparent;color:#8A8F98;font-size:18px;line-height:1;">×</button>';
-    document.body.appendChild(bar);
-    document.getElementById('ttBarYes').onclick = function(){
-      doInstall(function(){ var b = document.getElementById('ttInstallBar'); if(b) b.remove(); });
-    };
-    document.getElementById('ttBarNo').onclick = function(){ dismiss(); bar.remove(); };
-  }
-
-  function render(){
-    var box = document.getElementById('ttInstallBox');
-    if(box){ renderBox(box); }
-    if(document.body) renderBar();
-  }
-
-  window.addEventListener('beforeinstallprompt', function(e){ e.preventDefault(); deferred = e; render(); });
-  window.addEventListener('appinstalled', function(){ deferred = null; installed = true; known = true; render(); });
-  window.ttRenderInstallCard = render;
-  /* 設定画面を組み直したあとに自動で追従する */
-  document.addEventListener('click', function(){ setTimeout(render, 0); });
-
-  if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', probe);
-  else probe();
-})();
-</script>
-
 </body>
 </html>
