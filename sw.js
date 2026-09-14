@@ -2,7 +2,7 @@
    github.io は全リポジトリが同じオリジンなので、
    自分の名前空間（TT_NS）のものだけを消します。 */
 const TT_NS = 'tt:kakeibo:';
-const CACHE = TT_NS + 'v58';
+const CACHE = TT_NS + 'v59';
 const ASSETS = ["./", "./index.html", "./manifest.json", "./icon-180.png", "./icon-512.png", "./jszip.min.js", "./template_iryouhi.b64.js"];
 
 self.addEventListener("install", e => {

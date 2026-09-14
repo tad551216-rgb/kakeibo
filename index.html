@@ -755,7 +755,7 @@ async function ensureAccount(name,kind){
 
 /* ---------- ユーティリティ ---------- */
 /* ---------- ビルド番号と更新チェック (b67) ---------- */
-const APP_BUILD = "b67";
+const APP_BUILD = "b68";
 async function checkForUpdate(){
   const box = el("updStatus"), btn = el("btnUpdChk");
   const say = (m,c)=>{ if(box){ box.textContent = m; box.style.color = c || "var(--muted)"; } };
@@ -1511,7 +1511,7 @@ function yearOptions(current, availYears){
 }
 
 /* ---------- ホーム ---------- */
-/* ---------- カテゴリー別の推移 (b66) ----------
+/* ---------- カテゴリー別の推移 ----------
    ・集計は sumMonth と同じ条件(type==="expense"/"income")なので
      振替(対象外)は自動的に除外され、上のカードの数字と必ず一致する。
    ・基準日は t.date(発生日/利用日)。
@@ -1658,7 +1658,7 @@ function catTrendDetail(d, sel){
 
 function mountCatTrend(txs, months){
   const host = el("catTrend"); if(!host) return;
-  const d = catTrendData(txs, months, 5);
+  const d = catTrendData(txs, months, 8);
   if(!d.cats.length){ host.innerHTML = `<div class="empty">この期間の支出はありません</div>`; return; }
   if(S.ctMonth === undefined || S.ctMonth > months.length-1) S.ctMonth = months.length-1;
   if(S.ctCat === undefined) S.ctCat = null;
@@ -1771,7 +1771,7 @@ async function renderHome(){
   <div class="card">
     <h2>カテゴリー別の推移(${trendMonths.length}ヶ月)</h2>
     <div id="catTrend"></div>
-    <div class="note">支出を上位5カテゴリ＋「他」で積み上げ、細い枠が収入、下段が収支差です。振替(対象外)は含みません。</div>
+    <div class="note">支出を上位8カテゴリ＋「他」で積み上げ、細い枠が収入、下段が収支差です。振替(対象外)は含みません。</div>
   </div>
   <div class="card">
     <h2>${year}年 医療費の累計(確定申告メモ)</h2>
