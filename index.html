@@ -755,7 +755,7 @@ async function ensureAccount(name,kind){
 
 /* ---------- ユーティリティ ---------- */
 /* ---------- ビルド番号と更新チェック (b67) ---------- */
-const APP_BUILD = "b69";
+const APP_BUILD = "b70";
 async function checkForUpdate(){
   const box = el("updStatus"), btn = el("btnUpdChk");
   const say = (m,c)=>{ if(box){ box.textContent = m; box.style.color = c || "var(--muted)"; } };
@@ -1641,19 +1641,23 @@ function catTrendDetail(d, sel){
   if(sel.month == null)
     return `<div class="note" style="margin-top:8px">月をタップすると内訳が出ます。</div>`;
   const i = sel.month, net = d.net[i];
-  const rows = d.cats.filter(c=>c.series[i]>0).sort((a,b)=>b.series[i]-a.series[i]).map(c=>{
+  const rows = d.cats.map((c,ci)=>({c,ci})).filter(o=>o.c.series[i]>0)
+    .sort((a,b)=>b.c.series[i]-a.c.series[i]).map(({c,ci})=>{
     const pct = d.exp[i] ? c.series[i]/d.exp[i]*100 : 0;
-    return `<div style="display:flex;align-items:center;gap:7px;padding:2px 0;font-size:.8125rem">
+    const label = c.rest ? c.name+"("+c.rest.length+"件)" : c.name;
+    return `<div data-ctd="${ci}" role="button" tabindex="0" style="display:flex;align-items:center;gap:7px;padding:5px 2px;font-size:.8125rem;cursor:pointer;border-radius:6px;-webkit-tap-highlight-color:rgba(27,42,74,.08)">
       <span style="width:9px;height:9px;border-radius:2px;background:${c.color};flex:none"></span>
-      <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(c.name)}</span>
+      <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(label)}</span>
       <span style="color:var(--muted);font-size:11px">${pct.toFixed(0)}%</span>
-      <span class="num">${yen(c.series[i])}</span></div>`;
+      <span class="num">${yen(c.series[i])}</span>
+      <span style="color:var(--muted);font-size:13px;flex:none;margin-left:1px">›</span></div>`;
   }).join("");
   return `<div style="margin-top:10px;border-top:1px solid var(--line);padding-top:8px">
     <div class="note" style="display:flex;justify-content:space-between;margin:0 0 6px">
       <span>${d.months[i].replace("-","年")}月</span>
       <span>収入 ${yen(d.inc[i])}　支出 ${yen(d.exp[i])}　<b style="color:${net<0?'var(--expense)':'var(--income)'}">収支 ${net>=0?"+":""}${yen(net)}</b></span>
-    </div>${rows || `<div class="note">支出の記録がありません</div>`}</div>`;
+    </div>${rows || `<div class="note">支出の記録がありません</div>`}
+    ${rows?`<div class="note" style="margin-top:6px">カテゴリー名をタップすると、その月の明細を表示します。</div>`:""}</div>`;
 }
 
 function mountCatTrend(txs, months){
@@ -1668,6 +1672,22 @@ function mountCatTrend(txs, months){
     host.querySelectorAll("[data-ctm]").forEach(r=>{
       r.onclick = ()=>{ const m = Number(r.getAttribute("data-ctm"));
         S.ctMonth = (S.ctMonth === m ? null : m); draw(); };
+    });
+    host.querySelectorAll("[data-ctd]").forEach(r=>{
+      const go = ()=>{
+        const c = d.cats[Number(r.getAttribute("data-ctd"))];
+        const mm = d.months[S.ctMonth];
+        if(!c || !mm) return;
+        // 「他」はまとめた元のカテゴリすべてを絞り込み対象にする
+        S.filterCats = c.rest ? c.rest.slice() : [c.name];
+        S.listPeriod = "month";
+        S.listMonth  = mm;
+        S.tab = "list";
+        renderTab();
+        window.scrollTo(0,0);
+      };
+      r.onclick = go;
+      r.onkeydown = e=>{ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); go(); } };
     });
     host.querySelectorAll("[data-ctc]").forEach(b=>{
       b.onclick = ()=>{ const c = Number(b.getAttribute("data-ctc"));
