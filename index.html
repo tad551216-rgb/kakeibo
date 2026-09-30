@@ -755,7 +755,7 @@ async function ensureAccount(name,kind){
 
 /* ---------- ユーティリティ ---------- */
 /* ---------- ビルド番号と更新チェック (b67) ---------- */
-const APP_BUILD = "b71";
+const APP_BUILD = "b72";
 async function checkForUpdate(){
   const box = el("updStatus"), btn = el("btnUpdChk");
   const say = (m,c)=>{ if(box){ box.textContent = m; box.style.color = c || "var(--muted)"; } };
@@ -2672,8 +2672,8 @@ async function openAccMng(){
 const TAX_RULES = {
   r2_6: { // 令和2〜6年分(2020〜2024)
     label: "令和2〜6年分",
-    salary: [ // [収入上限, 率, 加算] → 控除額 = min(収入, 収入×率+加算)
-      [1625000, 0, 550000],
+    salary: [ // 給与所得控除額の速算表 [収入上限, 率, 加算] → 控除額 = 収入×率+加算
+      [1625000, 0, 550000],      // 先頭は [最低保障が効く収入上限, 0, 最低保障額]
       [1800000, 0.4, -100000],
       [3600000, 0.3, 80000],
       [6600000, 0.2, 440000],
@@ -2684,8 +2684,8 @@ const TAX_RULES = {
       [24000000, 480000],[24500000, 320000],[25000000, 160000],[Infinity, 0],
     ],
   },
-  r7_8: { // 令和7・8年分(2025〜2026): 給与所得控除65万・基礎控除上乗せ特例
-    label: "令和7・8年分(基礎控除の上乗せ特例あり)",
+  r7: { // 令和7年分(2025) 令和7年度改正: 給与所得控除の最低保障65万・基礎控除の上乗せ特例
+    label: "令和7年分",
     salary: [
       [1900000, 0, 650000],
       [3600000, 0.3, 80000],
@@ -2698,33 +2698,63 @@ const TAX_RULES = {
       [23500000, 580000],[24000000, 480000],[24500000, 320000],[25000000, 160000],[Infinity, 0],
     ],
   },
-  r9: { // 令和9年分以降(現行法ベース)
-    label: "令和9年分以降(現行法)",
+  r8_9: { // 令和8・9年分(2026〜2027) 令和8年度改正: 最低保障74万(69万+特例5万)・基礎控除62万+特例
+    label: "令和8・9年分",
     salary: [
-      [1900000, 0, 650000],
+      [2200000, 0, 740000],
       [3600000, 0.3, 80000],
       [6600000, 0.2, 440000],
       [8500000, 0.1, 1100000],
       [Infinity, 0, 1950000],
     ],
     base: [
-      [1320000, 950000],[23500000, 580000],[24000000, 480000],
-      [24500000, 320000],[25000000, 160000],[Infinity, 0],
+      [4890000, 1040000],[6550000, 670000],[23500000, 620000],
+      [24000000, 480000],[24500000, 320000],[25000000, 160000],[Infinity, 0],
+    ],
+  },
+  r10: { // 令和10年分以降(現行法ベース) 特例5万・特例加算42万/5万が終了、恒久の37万加算のみ
+    label: "令和10年分以降(現行法・見込み)",
+    salary: [
+      [2033000, 0, 690000],
+      [3600000, 0.3, 80000],
+      [6600000, 0.2, 440000],
+      [8500000, 0.1, 1100000],
+      [Infinity, 0, 1950000],
+    ],
+    base: [
+      [1320000, 990000],[23500000, 620000],
+      [24000000, 480000],[24500000, 320000],[25000000, 160000],[Infinity, 0],
     ],
   },
 };
 function rulesFor(year){
-  return year<=2024 ? TAX_RULES.r2_6 : year<=2026 ? TAX_RULES.r7_8 : TAX_RULES.r9;
+  return year<=2024 ? TAX_RULES.r2_6
+       : year<=2025 ? TAX_RULES.r7
+       : year<=2027 ? TAX_RULES.r8_9
+       : TAX_RULES.r10;
 }
-function salaryIncome(income, R){ // 給与所得(給与所得控除後の金額)を正式な算式で
+/* 所得税に上乗せされる付加税。
+   令和9年分から復興特別所得税が2.1%→1.1%に下がり、防衛特別所得税1%が創設される
+   (合計2.1%は変わらないが、内訳が分かれるため別々に端数処理する)。 */
+function surtaxRates(year){
+  return year>=2027 ? {fukko:0.011, boei:0.010} : {fukko:0.021, boei:0};
+}
+function salaryIncome(income, R){ // 給与所得(給与所得控除後の金額)
+  income = Math.max(0, Math.floor(Number(income)||0));
   if(income<=0) return 0;
-  if(income < 1625001) return Math.max(0, income - (R.salary[0][2]||650000));
-  const A = Math.floor(income/4/1000)*1000; // 4で割って千円未満切捨
-  if(income < 1800000) return A*2.4 + 100000;
-  if(income < 3600000) return A*2.8 - 80000;
-  if(income < 6600000) return A*3.2 - 440000;
-  for(const [cap,r,a] of R.salary) if(income<=cap) return income - Math.min(income, Math.floor(income*r+a));
-  return income - 1950000;
+  const min = R.salary[0][2];                    // 最低保障額
+  const byMin = Math.max(0, income - min);
+  if(income <= R.salary[0][0]) return byMin;
+  const A = Math.floor(income/4/1000)*1000;      // 収入÷4(千円未満切捨) ← 公式の表と同じ扱い
+  for(let k=1;k<R.salary.length;k++){
+    const [cap,r,a] = R.salary[k];
+    if(income<=cap){
+      // 控除 = 収入×r + a  →  所得 = 収入×(1-r) - a  (収入×(1-r) = A×4×(1-r))
+      return Math.min(byMin, Math.round(A*4*(1-r)) - a);
+    }
+  }
+  const last = R.salary[R.salary.length-1];
+  return Math.min(byMin, income - last[2]);      // 上限(1,950,000)
 }
 function pensionDeduction(income, age65){ // 公的年金等控除(他の合計所得1,000万円以下/令和2年分以降共通)
   if(income<=0) return 0;
@@ -2793,8 +2823,10 @@ function computeTax(year,v,agg){
   const dedTotal=n(v.shaho)+medDed+seiho+jishin+donDed+spouse+fuyo+other+kiso;
   const kazei=Math.max(0,Math.floor((gokei-dedTotal)/1000)*1000);
   const [tax0,rate]=taxRate(kazei);
-  const fukko=Math.floor(tax0*0.021);
-  const taxTotal=tax0+fukko;
+  const SR=surtaxRates(year);
+  const fukko=Math.floor(tax0*SR.fukko);   // 復興特別所得税
+  const boei=Math.floor(tax0*SR.boei);     // 防衛特別所得税(令和9年分〜)
+  const taxTotal=tax0+fukko+boei;
   const diff=taxTotal-n(v.genSen);
   // 住民税所得割の概算 → ふるさと納税限度額の目安
   // (住民税側は扶養控除を一般38万→33万相当に補正)
@@ -2805,7 +2837,7 @@ function computeTax(year,v,agg){
   const jWari=Math.max(0,Math.floor(jKazei*0.10)-2500);
   const furuLimit=jWari>0?Math.floor(jWari*0.2/(0.9-rate*1.021))+2000:2000;
   return {salDed,salInc,penDed,penInc,adj,gokei,med,don,medDed,seiho,jishin,donDed,spouse,fuyo,other,kiso,
-    dedTotal,kazei,tax0,fukko,taxTotal,diff,jWari,furuLimit,shaho:n(v.shaho),ruleLabel:R.label};
+    dedTotal,kazei,tax0,fukko,boei,taxTotal,diff,jWari,furuLimit,shaho:n(v.shaho),ruleLabel:R.label};
 }
 async function renderTax(){
   const txs=await tall("tx");
@@ -2878,7 +2910,7 @@ async function renderTax(){
     <input type="file" id="docFile" accept="application/pdf,image/*" style="display:none">
     <p class="note" style="margin:10px 0 0">原本(郵送物・電子データ)も別途お手元に残してください。ここは申告時にすぐ見られるようまとめておく控えです。</p>
   </div>
-  <div class="card"><h2>ご注意</h2><p class="note" style="margin:0">令和7年度税制改正(基礎控除・給与所得控除の引上げ、令和7・8年分の基礎控除上乗せ特例)を反映した<b>概算</b>です。端数処理や個別事情により実際の申告額と差が出ることがあります。最終確認は国税庁「確定申告書等作成コーナー」で行ってください。</p></div>`;
+  <div class="card"><h2>ご注意</h2><p class="note" style="margin:0">令和8年度税制改正まで反映した<b>概算</b>です。令和8・9年分は基礎控除が最大104万円(62万円＋特例加算)、給与所得控除の最低保障額が74万円(69万円＋特例5万円)になります。令和9年分からは復興特別所得税が1.1%に下がり、防衛特別所得税1%が加わります(合計2.1%は据え置き)。扶養親族等の所得要件は令和8年分から62万円以下です。<br>個人住民税の基礎控除は43万円のまま据え置きのため、所得税がかからなくても住民税がかかる場合があります。ふるさと納税の限度額は住民税所得割からの目安で、令和9年分以降の付加税の扱いは変わる可能性があります。<br>端数処理や個別事情により実際の申告額と差が出ます。最終確認は国税庁「確定申告書等作成コーナー」で行ってください。</p></div>`;
 
   const collect=()=>{
     for(const k of ["salary","pension","shaho","sn","so","kaigo","nn","no","jishin","kyuChoki","medOv","medHoten","donOv","spouse","fuyo","other","genSen"])
@@ -2908,7 +2940,10 @@ async function renderTax(){
         ${row("基礎控除",yen(r.kiso))}
         ${row("所得控除の合計",yen(r.dedTotal),"sum")}
         ${row("課税所得",yen(r.kazei))}
-        ${row("所得税+復興特別所得税",yen(r.taxTotal))}
+        ${row("所得税",yen(r.tax0))}
+        ${row("復興特別所得税",yen(r.fukko))}
+        ${r.boei?row("防衛特別所得税",yen(r.boei)):""}
+        ${row("所得税等の合計",yen(r.taxTotal),"sum")}
         ${row("源泉徴収税額",yen(Number(v.genSen)||0))}
       </div>
       <p class="note" style="margin:8px 0 0">適用税制: ${r.ruleLabel}</p>
