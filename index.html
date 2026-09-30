@@ -755,7 +755,7 @@ async function ensureAccount(name,kind){
 
 /* ---------- ユーティリティ ---------- */
 /* ---------- ビルド番号と更新チェック (b67) ---------- */
-const APP_BUILD = "b70";
+const APP_BUILD = "b71";
 async function checkForUpdate(){
   const box = el("updStatus"), btn = el("btnUpdChk");
   const say = (m,c)=>{ if(box){ box.textContent = m; box.style.color = c || "var(--muted)"; } };
@@ -897,8 +897,31 @@ function normalizeOlive(rows){
   return {txs:out, excluded:0, bill};
 }
 
+/* 月末残高の判定 (b71)
+   同じ日に複数の取引があるCSVでは、日付の比較だけでは月内の最新行を決められない。
+   残高のつながりからCSVの並び(昇順/降順)を判定し、同日内は並び順で最新を選ぶ。 */
+function monthEndBals(recs){ // recs: CSV出現順の [{date,bal,out,in}]
+  const r = recs.filter(x=>x.date && x.bal!=null);
+  if(!r.length) return {};
+  let asc=0, dsc=0;
+  for(let i=0;i+1<r.length;i++){
+    const a=r[i], b=r[i+1];
+    if(a.bal + a.out - a.in === b.bal) dsc++;   // 新しい→古い
+    if(b.bal - b.out + b.in === a.bal) asc++;   // 古い→新しい
+  }
+  const isDesc = (dsc!==asc) ? dsc>asc : r[0].date > r[r.length-1].date;
+  const bals={};
+  r.forEach((x,i)=>{
+    const m=x.date.slice(0,7), cur=bals[m];
+    if(!cur || x.date>cur.date || (x.date===cur.date && (isDesc ? i<cur.i : i>cur.i)))
+      bals[m]={date:x.date, amount:x.bal, i};
+  });
+  for(const m in bals) delete bals[m].i;
+  return bals;
+}
+
 function normalizeBank(rows){ // 汎用銀行形式: 口座名,年月日,お引出し,お預入れ,摘要,残高
-  const out=[]; const bals={}; let accName="";
+  const out=[]; const recs=[]; let accName="";
   const H=rows[0]; const idx=n=>H.indexOf(n);
   const iAcc=idx("口座名"), iDate=idx("年月日"), iOut=idx("お引出し"),
         iIn=idx("お預入れ"), iDesc=idx("摘要"), iBal=idx("残高");
@@ -907,11 +930,8 @@ function normalizeBank(rows){ // 汎用銀行形式: 口座名,年月日,お引�
     const d=normDate(c[iDate]); if(!d) continue;
     if(!accName) accName=(c[iAcc]||"").trim();
     const balV=parseAmt(c[iBal]);
-    if(balV!=null){
-      const m=d.date.slice(0,7);
-      if(!bals[m] || d.date>=bals[m].date) bals[m]={date:d.date, amount:balV};
-    }
     const outAmt=parseAmt(c[iOut]), inAmt=parseAmt(c[iIn]);
+    recs.push({date:d.date, bal:balV, out:outAmt||0, in:inAmt||0});
     const desc=(c[iDesc]||"").trim();
     let type, amount;
     if(outAmt){type="expense";amount=outAmt;}
@@ -924,11 +944,11 @@ function normalizeBank(rows){ // 汎用銀行形式: 口座名,年月日,お引�
       source:"bank", category:"", taxTag:"", locked:false
     });
   }
-  return {txs:out, excluded:0, bals, accName};
+  return {txs:out, excluded:0, bals:monthEndBals(recs), accName};
 }
 
 function normalizeAeonCSV(rows){ // イオン銀行: 日付,お取引内容,お引出し,お預入れ,残高(降順)
-  const out=[]; const bals={};
+  const out=[]; const recs=[];
   const H=rows[0].map(h=>h.trim());
   const iDate=H.indexOf("日付"), iDesc=H.indexOf("お取引内容"),
         iOut=H.indexOf("お引出し"), iIn=H.indexOf("お預入れ"),
@@ -937,11 +957,8 @@ function normalizeAeonCSV(rows){ // イオン銀行: 日付,お取引内容,お�
     const c=rows[r];
     const d=normDate(c[iDate]); if(!d) continue;
     const balV=parseAmt(c[iBal]);
-    if(balV!=null){ // 降順でも日付比較で月内最新を採用
-      const m=d.date.slice(0,7);
-      if(!bals[m] || d.date>=bals[m].date) bals[m]={date:d.date, amount:balV};
-    }
     const outAmt=parseAmt(c[iOut]), inAmt=parseAmt(c[iIn]);
+    recs.push({date:d.date, bal:balV, out:outAmt||0, in:inAmt||0});
     const desc=(c[iDesc]||"").trim();
     let type, amount;
     if(outAmt){type="expense";amount=outAmt;}
@@ -954,7 +971,7 @@ function normalizeAeonCSV(rows){ // イオン銀行: 日付,お取引内容,お�
       source:"aeon", category:"", taxTag:"", locked:false
     });
   }
-  return {txs:out, excluded:0, bals, accName:"イオン銀行"};
+  return {txs:out, excluded:0, bals:monthEndBals(recs), accName:"イオン銀行"};
 }
 
 function normalizeSaison(rows){ // セゾン: ヘッダー部+空行+明細(利用日,店名,本人区分,支払区分,締前,利用金額,備考)
@@ -1100,7 +1117,7 @@ function normalizePPCard(rows){ // PayPayカード請求明細
 }
 
 function normalizeSMBC(rows){
-  const out=[]; const bals={};
+  const out=[]; const recs=[];
   const H=rows[0]; const idx=n=>H.indexOf(n);
   const iDate=idx("年月日"), iOut=idx("お引出し"), iIn=idx("お預入れ"),
         iDesc=idx("お取り扱い内容"), iBal=idx("残高");
@@ -1108,11 +1125,8 @@ function normalizeSMBC(rows){
     const c=rows[r];
     const d=normDate(c[iDate]); if(!d) continue;
     const balV=parseAmt(c[iBal]);
-    if(balV!=null){ // 各月の最終取引時点の残高を月末残高として記録
-      const m=d.date.slice(0,7);
-      if(!bals[m] || d.date>=bals[m].date) bals[m]={date:d.date, amount:balV};
-    }
     const outAmt=parseAmt(c[iOut]), inAmt=parseAmt(c[iIn]);
+    recs.push({date:d.date, bal:balV, out:outAmt||0, in:inAmt||0});
     const desc=(c[iDesc]||"").trim();
     let type, amount;
     if(outAmt){type="expense";amount=outAmt;}
@@ -1125,7 +1139,7 @@ function normalizeSMBC(rows){
       source:"smbc", category:"", taxTag:"", locked:false
     });
   }
-  return {txs:out, excluded:0, bals};
+  return {txs:out, excluded:0, bals:monthEndBals(recs)};
 }
 
 function normalizeSMBCCard(rows){ // 三井住友カード(通常)利用明細: 日付,ご利用先,本人/家族,支払方法,分割回数,支払月,利用金額,支払金額,...
