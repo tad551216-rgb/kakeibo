@@ -755,7 +755,7 @@ async function ensureAccount(name,kind){
 
 /* ---------- ユーティリティ ---------- */
 /* ---------- ビルド番号と更新チェック (b67) ---------- */
-const APP_BUILD = "b73";
+const APP_BUILD = "b74";
 async function checkForUpdate(){
   const box = el("updStatus"), btn = el("btnUpdChk");
   const say = (m,c)=>{ if(box){ box.textContent = m; box.style.color = c || "var(--muted)"; } };
@@ -1936,6 +1936,8 @@ async function renderList(){
       <input type="number" inputmode="numeric" id="lmax" placeholder="上限" value="${esc(S.listMax)}" style="flex:1;text-align:right">
       <button class="catclear" id="lclear" style="flex:none">クリア</button>
     </div>
+    <div id="lqStat" style="display:flex;align-items:baseline;gap:8px;margin-top:9px;padding-top:8px;
+      border-top:1px solid var(--line);font-size:0.8125rem"></div>
     <div class="note" style="margin:6px 0 0">半角/全角・ひらがな/カタカナ・濁点・記号の違いは無視します。空白で複数条件(AND)、先頭に - で除外。</div>
   </div>
   <div class="card sumcard" id="listSum"></div>
@@ -1949,6 +1951,14 @@ async function renderList(){
     let inc=0,exp=0;
     for(const t of list){ if(t.type==="income")inc+=t.amount; else if(t.type==="expense")exp+=t.amount; }
     const bal=inc-exp;
+    el("lqStat").innerHTML=`
+      <span style="color:var(--muted);flex:none">${on?"検索結果":"この期間"}</span>
+      <span style="font-weight:700;flex:none">${list.length}件</span>
+      ${on?`<span class="note" style="margin:0;flex:none">/ 全${baseList.length}件</span>`:""}
+      <span style="flex:1"></span>
+      ${exp?`<span class="num" style="font-weight:700;color:var(--expense)">支出 ${yen(exp)}</span>`:""}
+      ${inc?`<span class="num" style="font-weight:700;color:var(--income)">${exp?"　":""}収入 ${yen(inc)}</span>`:""}
+      ${(!exp&&!inc)?`<span class="note" style="margin:0">—</span>`:""}`;
     el("listSum").innerHTML=`
       <div class="sumrow">
         <div class="sumcell"><div class="t">収入</div><div class="v inc num">${yen(inc)}</div></div>
