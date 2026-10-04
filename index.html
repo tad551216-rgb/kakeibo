@@ -755,7 +755,7 @@ async function ensureAccount(name,kind){
 
 /* ---------- ユーティリティ ---------- */
 /* ---------- ビルド番号と更新チェック (b67) ---------- */
-const APP_BUILD = "b75";
+const APP_BUILD = "b76";
 async function checkForUpdate(){
   const box = el("updStatus"), btn = el("btnUpdChk");
   const say = (m,c)=>{ if(box){ box.textContent = m; box.style.color = c || "var(--muted)"; } };
@@ -1960,10 +1960,11 @@ async function renderList(){
       ${inc?`<span class="num" style="font-weight:700;color:var(--income)">${exp?"　":""}収入 ${yen(inc)}</span>`:""}
       ${(!exp&&!inc)?`<span class="note" style="margin:0">—</span>`:""}`;
     el("listSum").innerHTML=`
-      <div class="sumrow">
-        <div class="sumcell"><div class="t">差引</div><div class="v num" style="color:${bal>=0?'var(--income)':'var(--expense)'}">${bal<0?"−":"+"}${yen(Math.abs(bal))}</div></div>
-      </div>
-      <div class="note" style="text-align:center;margin-top:4px">${rangeLabel}${S.filterCats.length?` ・ ${S.filterCats.length===1?esc(S.filterCats[0]):"カテゴリ"+S.filterCats.length+"件"}`:""}</div>`;
+      <div style="display:flex;align-items:baseline;gap:8px">
+        <span style="font-size:0.75rem;color:var(--muted);flex:none">差引</span>
+        <span class="note" style="margin:0;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${rangeLabel}${S.filterCats.length?` ・ ${S.filterCats.length===1?esc(S.filterCats[0]):"カテゴリ"+S.filterCats.length+"件"}`:""}</span>
+        <span class="num" style="flex:none;font-size:1.0625rem;font-weight:700;color:${bal>=0?'var(--income)':'var(--expense)'}">${bal<0?"−":"+"}${yen(Math.abs(bal))}</span>
+      </div>`;
     let b="";
     if(!list.length){
       b=`<div class="empty">${on?"検索条件に合う明細がありません":"該当する明細がありません"}</div>`;
