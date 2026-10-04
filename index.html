@@ -755,7 +755,7 @@ async function ensureAccount(name,kind){
 
 /* ---------- ユーティリティ ---------- */
 /* ---------- ビルド番号と更新チェック (b67) ---------- */
-const APP_BUILD = "b74";
+const APP_BUILD = "b75";
 async function checkForUpdate(){
   const box = el("updStatus"), btn = el("btnUpdChk");
   const say = (m,c)=>{ if(box){ box.textContent = m; box.style.color = c || "var(--muted)"; } };
@@ -1961,11 +1961,9 @@ async function renderList(){
       ${(!exp&&!inc)?`<span class="note" style="margin:0">—</span>`:""}`;
     el("listSum").innerHTML=`
       <div class="sumrow">
-        <div class="sumcell"><div class="t">収入</div><div class="v inc num">${yen(inc)}</div></div>
-        <div class="sumcell"><div class="t">支出</div><div class="v exp num">${yen(exp)}</div></div>
-        <div class="sumcell"><div class="t">差引</div><div class="v num" style="color:${bal>=0?'var(--income)':'var(--expense)'}">${bal>=0?"+":""}${yen(bal)}</div></div>
+        <div class="sumcell"><div class="t">差引</div><div class="v num" style="color:${bal>=0?'var(--income)':'var(--expense)'}">${bal<0?"−":"+"}${yen(Math.abs(bal))}</div></div>
       </div>
-      <div class="note" style="text-align:center;margin-top:4px">${rangeLabel}${S.filterCats.length?` ・ ${S.filterCats.length===1?esc(S.filterCats[0]):"カテゴリ"+S.filterCats.length+"件"}`:""} ・ ${list.length}件${on?` (全${baseList.length}件中)`:""}</div>`;
+      <div class="note" style="text-align:center;margin-top:4px">${rangeLabel}${S.filterCats.length?` ・ ${S.filterCats.length===1?esc(S.filterCats[0]):"カテゴリ"+S.filterCats.length+"件"}`:""}</div>`;
     let b="";
     if(!list.length){
       b=`<div class="empty">${on?"検索条件に合う明細がありません":"該当する明細がありません"}</div>`;
