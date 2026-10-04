@@ -131,7 +131,7 @@ canvas{display:block;width:100%;}
 .bigcat-btn{flex:1;padding:15px;border:none;border-radius:13px;background:var(--ink);color:#fff;font:inherit;font-size:1.05rem;font-weight:800;}
 .bigcat-btn.sub{background:var(--surface);color:var(--ink);border:2px solid var(--line);}
 .catsec-title:first-child{margin-top:0;}
-select,input[type=text],input[type=date],input[type=number]{
+select,input[type=text],input[type=search],input[type=date],input[type=number]{
   font:inherit;padding:9px 10px;border:1px solid var(--line);border-radius:10px;background:var(--surface);
   color:var(--ink);min-width:0;}
 .filterbar select{flex:1;}
@@ -755,7 +755,7 @@ async function ensureAccount(name,kind){
 
 /* ---------- ユーティリティ ---------- */
 /* ---------- ビルド番号と更新チェック (b67) ---------- */
-const APP_BUILD = "b72";
+const APP_BUILD = "b73";
 async function checkForUpdate(){
   const box = el("updStatus"), btn = el("btnUpdChk");
   const say = (m,c)=>{ if(box){ box.textContent = m; box.style.color = c || "var(--muted)"; } };
@@ -1177,6 +1177,32 @@ function normalizeSMBCCard(rows){ // 三井住友カード(通常)利用明細: 
 
 /* ---------- 自動分類 ---------- */
 const norm=s=>String(s||"").normalize("NFKC").toLowerCase(); // 全角半角・大小文字を同一視
+/* 明細検索用の「ゆるい」キー。
+   半角/全角・大小文字(NFKC)、ひらがな/カタカナ、小書き文字、濁点・半濁点、
+   記号と空白の違いを無視して比較できる形にそろえる。
+   例: 「セゾン」「ｾｿﾞﾝ」「せそん」「ｾ ｿﾞ ﾝ」はすべて同じキーになる。 */
+function skey(s){
+  let x = String(s||"").normalize("NFKC").toLowerCase();
+  x = x.replace(/[\u3041-\u3096]/g, c=>String.fromCharCode(c.charCodeAt(0)+0x60)); // ひらがな→カタカナ
+  x = x.normalize("NFD").replace(/[\u3099\u309A]/g,"").normalize("NFC");           // 濁点・半濁点を落とす
+  x = x.replace(/[ァィゥェォッャュョヮヵヶ]/g, c=>
+        ({"ァ":"ア","ィ":"イ","ゥ":"ウ","ェ":"エ","ォ":"オ","ッ":"ツ","ャ":"ヤ","ュ":"ユ","ョ":"ヨ","ヮ":"ワ","ヵ":"カ","ヶ":"ケ"}[c]));
+  x = x.replace(/[\s\u3000・･ｰー\-－—‐~～=＝,，.．、。:：;；\/\\|｜'"’”`()（）\[\]「」『』【】{}<>＜＞*＊+＋!！?？#＃&＆@＠%％$＄_]/g,"");
+  return x;
+}
+/* 明細が検索条件に合うか。キーワードは空白区切りのAND、先頭が - なら除外。 */
+function txMatch(t, q, min, max){
+  if(min!=="" && t.amount < Number(min)) return false;
+  if(max!=="" && t.amount > Number(max)) return false;
+  const words=String(q||"").trim().split(/[\s\u3000]+/).filter(Boolean);
+  if(!words.length) return true;
+  const hay = skey([t.counterparty,t.memo,t.category,t.method,t.taxTag].join(" "));
+  for(const w of words){
+    if(w[0]==="-" && w.length>1){ if(hay.includes(skey(w.slice(1)))) return false; }
+    else if(!hay.includes(skey(w))) return false;
+  }
+  return true;
+}
 let rulesCache=[];
 async function loadRules(){ rulesCache = await tall("rules"); }
 function categorize(tx){
@@ -1498,7 +1524,7 @@ function drawBars(canvas, labels, incs, exps, months){
 }
 
 /* ---------- 画面状態 ---------- */
-const S = { tab:"home", month:"", homeMode:"expense", homePeriod:"month", periodYear:"", rangeFrom:"", rangeTo:"", listPeriod:"month", listMonth:"", listYear:"", listFrom:"", listTo:"", filterCats:[], filterMonth:"", assetMonth:"", taxYear:0, docOpenType:"", openCatMgmt:false, openRules:false };
+const S = { tab:"home", month:"", homeMode:"expense", homePeriod:"month", periodYear:"", rangeFrom:"", rangeTo:"", listPeriod:"month", listMonth:"", listYear:"", listFrom:"", listTo:"", listQ:"", listMin:"", listMax:"", filterCats:[], filterMonth:"", assetMonth:"", taxYear:0, docOpenType:"", openCatMgmt:false, openRules:false };
 
 function latestMonth(txs){
   if(!txs.length){const d=new Date();return d.toISOString().slice(0,7);}
@@ -1694,6 +1720,7 @@ function mountCatTrend(txs, months){
         if(!c || !mm) return;
         // 「他」はまとめた元のカテゴリすべてを絞り込み対象にする
         S.filterCats = c.rest ? c.rest.slice() : [c.name];
+        S.listQ = ""; S.listMin = ""; S.listMax = "";   // 前回の検索条件を引きずらない
         S.listPeriod = "month";
         S.listMonth  = mm;
         S.tab = "list";
@@ -1857,15 +1884,11 @@ async function renderList(){
   else if(period==="range"){ from=S.listFrom; to=S.listTo; if(from>to){const t=from;from=to;to=t;} rangeLabel=monthLabel(from)+" 〜 "+monthLabel(to); }
   else { from=S.listMonth; to=S.listMonth; rangeLabel=monthLabel(S.listMonth); }
 
-  const list = txs.filter(t=>{
+  // 期間とカテゴリまでで絞った母集合。名称・金額の検索はこのあと drawList() で毎回かける。
+  const baseList = txs.filter(t=>{
     const mm=monthOf(t.date);
     return mm>=from && mm<=to && (!S.filterCats.length||S.filterCats.includes(t.category));
   }).sort((a,b)=>b.date.localeCompare(a.date));
-
-  // 合計計算
-  let inc=0,exp=0;
-  for(const t of list){ if(t.type==="income")inc+=t.amount; else if(t.type==="expense")exp+=t.amount; }
-  const bal=inc-exp;
 
   // 期間セレクタUI
   const segBtn=(val,label)=>`<button class="seg ${period===val?'on':''}" data-lperiod="${val}">${label}</button>`;
@@ -1903,34 +1926,71 @@ async function renderList(){
     ${S.filterCats.map(c=>{const col=(CAT[c]||{}).color||"#9AA0A6";
       return `<span class="catchip on" style="background:${col};border-color:${col};color:#fff">${esc(c)}</span>`;}).join("")}
   </div>`:""}
-  <div class="card sumcard">
-    <div class="sumrow">
-      <div class="sumcell"><div class="t">収入</div><div class="v inc num">${yen(inc)}</div></div>
-      <div class="sumcell"><div class="t">支出</div><div class="v exp num">${yen(exp)}</div></div>
-      <div class="sumcell"><div class="t">差引</div><div class="v num" style="color:${bal>=0?'var(--income)':'var(--expense)'}">${bal>=0?"+":""}${yen(bal)}</div></div>
+  <div class="card" style="padding:10px 14px">
+    <input type="search" id="lq" placeholder="名称で検索 (セゾン・ガソリン など)" value="${esc(S.listQ)}"
+      autocomplete="off" autocapitalize="off" spellcheck="false" style="width:100%">
+    <div style="display:flex;align-items:center;gap:6px;margin-top:8px">
+      <span class="note" style="margin:0;flex:none">金額</span>
+      <input type="number" inputmode="numeric" id="lmin" placeholder="下限" value="${esc(S.listMin)}" style="flex:1;text-align:right">
+      <span class="note" style="margin:0;flex:none">〜</span>
+      <input type="number" inputmode="numeric" id="lmax" placeholder="上限" value="${esc(S.listMax)}" style="flex:1;text-align:right">
+      <button class="catclear" id="lclear" style="flex:none">クリア</button>
     </div>
-    <div class="note" style="text-align:center;margin-top:4px">${rangeLabel}${S.filterCats.length?` ・ ${S.filterCats.length===1?esc(S.filterCats[0]):"カテゴリ"+S.filterCats.length+"件"}`:""} ・ ${list.length}件</div>
+    <div class="note" style="margin:6px 0 0">半角/全角・ひらがな/カタカナ・濁点・記号の違いは無視します。空白で複数条件(AND)、先頭に - で除外。</div>
   </div>
-  <div class="card" style="padding:4px 14px">`;
-  if(!list.length) html+=`<div class="empty">該当する明細がありません</div>`;
-  let prevDate="";
-  for(const t of list){
-    if(t.date!==prevDate){html+=`<div class="daterule">${t.date.replace(/-/g,"/")}</div>`;prevDate=t.date;}
-    const cd=CAT[t.category]||{};
-    const cls=t.type==="expense"?"exp":t.type==="income"?"inc":"trf";
-    const sign=t.type==="expense"?"−":t.type==="income"?"+":"";
-    const src=t.source==="paypay"?"PayPay":t.source==="ppcard"?"PayPayカード":t.source==="smbc"?"三井住友":t.source==="olive"?"Olive":t.source==="smbccard"?"三井住友カード":t.source==="aeon"?"イオン":t.source==="aeoncard"?"イオンカード":t.source==="saison"?"セゾン":t.source==="bank"?"銀行":"手入力";
-    html+=`<div class="txrow" data-id="${esc(t.id)}">
-      <span class="cat dot" style="background:${cd.color||"#ccc"}"></span>
-      <div class="mid">
-        <div class="nm">${esc(t.counterparty)}</div>
-        <div class="meta"><span class="srcbadge">${src}</span>${esc(t.category)}${t.taxTag?` ・税:${esc(t.taxTag)}`:""}</div>
-      </div>
-      <div class="amt ${cls} num">${sign}${yen(t.amount)}</div>
-    </div>`;
-  }
-  html+="</div>";
+  <div class="card sumcard" id="listSum"></div>
+  <div class="card" style="padding:4px 14px" id="listBody"></div>`;
   el("view").innerHTML=html;
+
+  /* 検索は一覧と集計だけを描き直す(入力欄を作り直さないのでフォーカスが外れない) */
+  const drawList=()=>{
+    const list=baseList.filter(t=>txMatch(t,S.listQ,S.listMin,S.listMax));
+    const on=(String(S.listQ).trim()!=="")||S.listMin!==""||S.listMax!=="";
+    let inc=0,exp=0;
+    for(const t of list){ if(t.type==="income")inc+=t.amount; else if(t.type==="expense")exp+=t.amount; }
+    const bal=inc-exp;
+    el("listSum").innerHTML=`
+      <div class="sumrow">
+        <div class="sumcell"><div class="t">収入</div><div class="v inc num">${yen(inc)}</div></div>
+        <div class="sumcell"><div class="t">支出</div><div class="v exp num">${yen(exp)}</div></div>
+        <div class="sumcell"><div class="t">差引</div><div class="v num" style="color:${bal>=0?'var(--income)':'var(--expense)'}">${bal>=0?"+":""}${yen(bal)}</div></div>
+      </div>
+      <div class="note" style="text-align:center;margin-top:4px">${rangeLabel}${S.filterCats.length?` ・ ${S.filterCats.length===1?esc(S.filterCats[0]):"カテゴリ"+S.filterCats.length+"件"}`:""} ・ ${list.length}件${on?` (全${baseList.length}件中)`:""}</div>`;
+    let b="";
+    if(!list.length){
+      b=`<div class="empty">${on?"検索条件に合う明細がありません":"該当する明細がありません"}</div>`;
+    }else{
+      let prevDate="";
+      for(const t of list){
+        if(t.date!==prevDate){b+=`<div class="daterule">${t.date.replace(/-/g,"/")}</div>`;prevDate=t.date;}
+        const cd=CAT[t.category]||{};
+        const cls=t.type==="expense"?"exp":t.type==="income"?"inc":"trf";
+        const sign=t.type==="expense"?"−":t.type==="income"?"+":"";
+        const src=t.source==="paypay"?"PayPay":t.source==="ppcard"?"PayPayカード":t.source==="smbc"?"三井住友":t.source==="olive"?"Olive":t.source==="smbccard"?"三井住友カード":t.source==="aeon"?"イオン":t.source==="aeoncard"?"イオンカード":t.source==="saison"?"セゾン":t.source==="bank"?"銀行":"手入力";
+        b+=`<div class="txrow" data-id="${esc(t.id)}">
+          <span class="cat dot" style="background:${cd.color||"#ccc"}"></span>
+          <div class="mid">
+            <div class="nm">${esc(t.counterparty)}</div>
+            <div class="meta"><span class="srcbadge">${src}</span>${esc(t.category)}${t.taxTag?` ・税:${esc(t.taxTag)}`:""}</div>
+          </div>
+          <div class="amt ${cls} num">${sign}${yen(t.amount)}</div>
+        </div>`;
+      }
+    }
+    el("listBody").innerHTML=b;
+    el("listBody").querySelectorAll(".txrow").forEach(r=>r.onclick=()=>openEdit(r.dataset.id));
+  };
+  drawList();
+  const onSearch=()=>{
+    S.listQ=el("lq").value; S.listMin=el("lmin").value; S.listMax=el("lmax").value;
+    drawList();
+  };
+  el("lq").oninput=onSearch; el("lmin").oninput=onSearch; el("lmax").oninput=onSearch;
+  el("lclear").onclick=()=>{
+    S.listQ=""; S.listMin=""; S.listMax="";
+    el("lq").value=""; el("lmin").value=""; el("lmax").value="";
+    drawList(); el("lq").focus();
+  };
   document.querySelectorAll("[data-lperiod]").forEach(b=>b.onclick=()=>{S.listPeriod=b.dataset.lperiod;renderList();});
   if(el("lmPrev")){
     el("lmPrev").onclick=()=>{S.listMonth=shiftMonth(S.listMonth,-1);renderList();};
@@ -1948,7 +2008,6 @@ async function renderList(){
   }
   if(el("catOpen")) el("catOpen").onclick=()=>openCatPicker(cats,()=>renderList());
   if(el("catClear")) el("catClear").onclick=()=>{S.filterCats=[];renderList();};
-  document.querySelectorAll(".txrow").forEach(r=>r.onclick=()=>openEdit(r.dataset.id));
 }
 
 /* ---------- 編集モーダル ---------- */
