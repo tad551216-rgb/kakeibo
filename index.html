@@ -662,8 +662,38 @@ async function migrate8(){
 }
 /* ---------- 重複監査 ---------- */
 const TT_SRC_CARD={smbccard:"三井住友カード",olive:"Olive",saison:"セゾン",ppcard:"PayPay",aeoncard:"イオンカード"};
+/* 銀行明細に出てくるカード引落の摘要。skey()で正規化して部分一致させるので
+   半角/全角・濁点の違いは無視されるが、漢字表記とカナ表記は別に並べる。 */
+const TT_CARD_PAYKW={
+  "三井住友カード":["ﾐﾂｲｽﾐﾄﾓｶ-ﾄﾞ","三井住友カード"],
+  "Olive":        ["ﾐﾂｲｽﾐﾄﾓｶ-ﾄﾞ","三井住友カード","ｵﾘ-ﾌﾞ","Olive"],
+  "セゾン":        ["ｾｿﾞﾝ","セゾン"],
+  "PayPay":       ["PAYPAYｶ-ﾄﾞ","PayPayカード"],
+  "イオンカード":   ["ｲｵﾝﾌｲﾅﾝｼﾔﾙ","イオンフィナンシャル","ｲｵﾝｶ-ﾄﾞ","イオンカード"],
+};
 const TT_SRC_NAME={paypay:"PayPay(アプリ)",ppcard:"PayPayカード",olive:"Olive/三井住友",smbccard:"三井住友カード",
   saison:"セゾン",aeon:"イオン銀行",aeoncard:"イオンカード",smbc:"三井住友銀行",bank:"銀行",manual:"手入力"};
+/* カード未払金の引落状況を自動判定する。
+   bill.month は「支払日の前月末」時点の負債なので、引落はその翌月に起きる。
+   銀行CSVのカード引落は取込時に「振替(対象外)」へ分類されるため、
+   翌月の銀行明細から摘要がカード名に一致する行を探す。
+   returns {state:"paid"|"unpaid"|"unknown", pay, date?, amount?} */
+function cardPayStatus(txs, billMonth, card){
+  const pay=shiftMonth(billMonth,1);
+  const kws=(TT_CARD_PAYKW[card]||[card]).map(skey).filter(Boolean);
+  let hit=null, bankRows=0;
+  for(const t of txs){
+    if(monthOf(t.date)!==pay) continue;
+    if(t.source!=="smbc" && t.source!=="aeon" && t.source!=="bank") continue;
+    bankRows++;
+    if(t.type==="income") continue;                 // 引落は出金側だけ
+    const h=skey(t.counterparty);
+    if(kws.some(k=>h.includes(k)) && (!hit||t.date<hit.date)) hit={date:t.date,amount:t.amount};
+  }
+  if(hit) return {state:"paid", pay, date:hit.date, amount:hit.amount};
+  return {state: bankRows?"unpaid":"unknown", pay};
+}
+
 async function ttDupAudit(){
   const out=el("ttDupOut"); if(!out) return;
   out.innerHTML='<p class="note">検出中…</p>';
@@ -755,7 +785,7 @@ async function ensureAccount(name,kind){
 
 /* ---------- ユーティリティ ---------- */
 /* ---------- ビルド番号と更新チェック (b67) ---------- */
-const APP_BUILD = "b76";
+const APP_BUILD = "b77";
 async function checkForUpdate(){
   const box = el("updStatus"), btn = el("btnUpdChk");
   const say = (m,c)=>{ if(box){ box.textContent = m; box.style.color = c || "var(--muted)"; } };
@@ -2581,6 +2611,23 @@ async function renderAssets(){
         <span style="flex:1;font-size:0.875rem;font-weight:600">${nameTags}</span>
         <input type="number" inputmode="numeric" data-aid="${a.aid}" class="balIn" style="width:140px;text-align:right" value="${b?b.amount:""}" placeholder="${cb?cb.amount:"未入力"}">
       </div>`;};
+  /* カード未払金の引落予定(自動判定)。
+     直近2ヶ月は引落済みも含めて全部出し、それより前は引落待ちだけを出す。 */
+  const allMeta=await tall("meta");
+  const payRows=[]; let waitSum=0, paidSum=0;
+  for(const sl of allMeta){
+    const k=String(sl.k); if(!k.startsWith("cardbill:")) continue;
+    const bm=k.slice(9); if(bm>m || bm<shiftMonth(m,-5)) continue;
+    for(const [card,amt] of Object.entries(sl.v||{})){
+      if(!(amt>0)) continue;
+      const st=cardPayStatus(txs,bm,card);
+      if(st.state==="paid"){ paidSum+=amt; if(bm<shiftMonth(m,-1)) continue; }
+      else waitSum+=amt;
+      payRows.push({bm,card,amt,st});
+    }
+  }
+  payRows.sort((a,b)=> a.bm===b.bm ? b.amt-a.amt : b.bm.localeCompare(a.bm));
+
   const assetAccs = accs.filter(a=>a.kind!=="liability");
   const liabAccs  = accs.filter(a=>a.kind==="liability");
   const effAmt = a => {
@@ -2627,6 +2674,33 @@ async function renderAssets(){
     <div style="height:8px"></div>
     <button class="btn sub" id="accMng">口座の追加・管理</button>
     <p class="note">三井住友銀行・イオン銀行とカード未払金(自動)はCSV取込時に自動記録され、常に最新のCSV残高が優先されます(手入力不可)。財布・修繕積立金などCSVのない口座は手入力してください。残高が未記録の月は直近の記録月の値を引き継いで反映します。</p>
+  </div>
+  <div class="card">
+    <h2>カード未払金の引落予定</h2>
+    ${payRows.length? payRows.map(r=>{
+      const paid=r.st.state==="paid";
+      const gap=paid && r.st.amount!==r.amt ? r.st.amount-r.amt : 0;
+      const badge = paid ? `引落済 ${r.st.date.slice(5).replace("-","/")}`
+                  : r.st.state==="unpaid" ? "未引落" : "確認待ち";
+      const col = paid ? "var(--muted)" : r.st.state==="unpaid" ? "var(--expense)" : "#B8860B";
+      return `<div style="display:flex;align-items:center;gap:7px;padding:4px 0;font-size:0.8125rem;${paid?"opacity:.6":""}">
+        <span style="flex:none;color:var(--muted);width:42px">${Number(r.bm.slice(5))}月分</span>
+        <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600">${esc(r.card)}</span>
+        <span style="flex:none;font-size:0.6875rem;color:${col};border:1px solid ${col};border-radius:999px;padding:1px 7px;white-space:nowrap">${badge}</span>
+        <span class="num" style="flex:none;font-weight:600">${yen(r.amt)}</span>
+      </div>${gap?`<div class="note" style="margin:-2px 0 4px 49px;color:var(--expense)">※引落額 ${yen(r.st.amount)}(差 ${gap>0?"+":""}${yen(gap)})</div>`:""}`;
+    }).join("")
+    : `<div class="note" style="margin:0">未払金の記録がありません。カードの請求明細を取り込むと表示されます。</div>`}
+    ${payRows.length?`<div style="margin-top:10px;padding-top:9px;border-top:1px solid var(--line)">
+      <div style="display:flex;justify-content:space-between;font-size:0.8125rem;padding:2px 0">
+        <span>現預金残高(${monthLabel(m)}末)</span><span class="num">${yen(cashSum0)}</span></div>
+      <div style="display:flex;justify-content:space-between;font-size:0.8125rem;padding:2px 0;color:var(--expense)">
+        <span>引落待ち</span><span class="num">${waitSum?"−":""}${yen(waitSum)}</span></div>
+      <div style="display:flex;justify-content:space-between;align-items:baseline;padding:7px 0 0;margin-top:4px;border-top:1px solid var(--line)">
+        <span style="font-weight:700;font-size:0.875rem">引落後の予想残高</span>
+        <span class="num" style="font-weight:700;font-size:1.0625rem;color:${cashSum0-waitSum<0?'var(--expense)':'var(--ink)'}">${yen(cashSum0-waitSum)}</span></div>
+    </div>`:""}
+    <p class="note">カードの請求額と、その翌月の銀行明細にある引落を自動で突き合わせています。「確認待ち」は引落月の銀行CSVがまだ取り込まれていないものです。引落待ちの合計には「未引落」と「確認待ち」の両方を含みます。</p>
   </div>
   <div class="card">
     <h2>純資産の推移</h2>
