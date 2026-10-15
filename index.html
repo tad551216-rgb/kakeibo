@@ -678,20 +678,32 @@ const TT_SRC_NAME={paypay:"PayPay(アプリ)",ppcard:"PayPayカード",olive:"Ol
    銀行CSVのカード引落は取込時に「振替(対象外)」へ分類されるため、
    翌月の銀行明細から摘要がカード名に一致する行を探す。
    returns {state:"paid"|"unpaid"|"unknown", pay, date?, amount?} */
-function cardPayStatus(txs, billMonth, card){
-  const pay=shiftMonth(billMonth,1);
-  const kws=(TT_CARD_PAYKW[card]||[card]).map(skey).filter(Boolean);
-  let hit=null, bankRows=0;
+/* 銀行明細のカード引落を1回のスキャンで (引落月 × カード) に索引化する。
+   bill.month は「支払日の前月末」時点の負債なので、引落はその翌月に起きる。
+   銀行CSVのカード引落は取込時に「振替(対象外)」へ分類される。 */
+function buildPayIndex(txs){
+  const KW={};
+  for(const c in TT_CARD_PAYKW) KW[c]=TT_CARD_PAYKW[c].map(skey).filter(Boolean);
+  const idx={}, bankMonths=new Set();
   for(const t of txs){
-    if(monthOf(t.date)!==pay) continue;
     if(t.source!=="smbc" && t.source!=="aeon" && t.source!=="bank") continue;
-    bankRows++;
-    if(t.type==="income") continue;                 // 引落は出金側だけ
+    const pm=monthOf(t.date); bankMonths.add(pm);
+    if(t.type==="income") continue;            // 引落は出金側だけ
     const h=skey(t.counterparty);
-    if(kws.some(k=>h.includes(k)) && (!hit||t.date<hit.date)) hit={date:t.date,amount:t.amount};
+    for(const c in KW){
+      if(!KW[c].some(k=>h.includes(k))) continue;
+      const key=pm+"|"+c, cur=idx[key];
+      if(!cur || t.date<cur.date) idx[key]={date:t.date,amount:t.amount};
+    }
   }
-  if(hit) return {state:"paid", pay, date:hit.date, amount:hit.amount};
-  return {state: bankRows?"unpaid":"unknown", pay};
+  return {
+    /* returns {state:"paid"|"unpaid"|"unknown", pay, date?, amount?} */
+    status(billMonth,card){
+      const pay=shiftMonth(billMonth,1), hit=idx[pay+"|"+card];
+      if(hit) return {state:"paid",pay,date:hit.date,amount:hit.amount};
+      return {state: bankMonths.has(pay)?"unpaid":"unknown", pay};
+    }
+  };
 }
 
 async function ttDupAudit(){
@@ -785,7 +797,7 @@ async function ensureAccount(name,kind){
 
 /* ---------- ユーティリティ ---------- */
 /* ---------- ビルド番号と更新チェック (b67) ---------- */
-const APP_BUILD = "b77";
+const APP_BUILD = "b79";
 async function checkForUpdate(){
   const box = el("updStatus"), btn = el("btnUpdChk");
   const say = (m,c)=>{ if(box){ box.textContent = m; box.style.color = c || "var(--muted)"; } };
@@ -2573,18 +2585,48 @@ async function renderAssets(){
     for(const b of arr){ if(b.month<=mm) best=b; else break; }
     return best;
   };
+  const allMeta=await tall("meta");
+  const PAY=buildPayIndex(txs);
   const isAutoLiab=a=>a.kind==="liability" && a.name==="カード未払金";
+  /* 月mm時点の「引落待ち」= その月末までの未払金のうち、まだ引き落とされていない分 */
+  const waitingAt=mm=>{
+    let w=0;
+    for(const sl of allMeta){
+      const k=String(sl.k); if(!k.startsWith("cardbill:")) continue;
+      const bm=k.slice(9); if(bm>mm) continue;
+      for(const [card,amt] of Object.entries(sl.v||{}))
+        if(amt>0 && PAY.status(bm,card).state!=="paid") w+=amt;
+    }
+    return w;
+  };
+  /* 現預金など資産の月末合計(カード未払金を除く) */
+  const assetsAt=mm=>{
+    let v=0,has=false,carried=false;
+    for(const a of accs){
+      if(isAutoLiab(a)) continue;
+      const b=eff(mm,a.aid,false); if(!b) continue;
+      has=true; if(b.month!==mm) carried=true;
+      v += a.kind==="liability" ? -b.amount : b.amount;
+    }
+    return has?{v,carried}:null;
+  };
   const nwOf=mm=>{
-    let nw=0,has=false,carried=false;
+    const a=assetsAt(mm); if(!a) return null;
+    return {nw:a.v-waitingAt(mm), cash:a.v, wait:waitingAt(mm), carried:a.carried};
+  };
+  /* 記録漏れチェックは会計ベース(未払金の全額を負債とみなす)のまま使う。
+     引落待ちベースだと、まだ引き落とされていない分がそのまま差額に出てしまうため。 */
+  const nwAcct=mm=>{
+    let v=0,has=false;
     for(const a of accs){const b=eff(mm,a.aid,isAutoLiab(a));if(!b)continue;has=true;
-      if(b.month!==mm)carried=true;
-      nw += a.kind==="liability" ? -b.amount : b.amount;}
-    return has?{nw,carried}:null;
+      v += a.kind==="liability" ? -b.amount : b.amount;}
+    return has?v:null;
   };
   const nwR=nwOf(m), nwPrevR=nwOf(shiftMonth(m,-1));
   const nw=nwR?nwR.nw:null, nwPrev=nwPrevR?nwPrevR.nw:null;
   const {inc,exp}=sumMonth(txs,m);
-  const gap=(nw!=null&&nwPrev!=null)? (nwPrev+inc-exp)-nw : null;
+  const aNow=nwAcct(m), aPrev=nwAcct(shiftMonth(m,-1));
+  const gap=(aNow!=null&&aPrev!=null)? (aPrev+inc-exp)-aNow : null;
   let allMonths=[];
   if(months.length){ let mm=months[0]; const last=months[months.length-1];
     while(mm<=last && allMonths.length<240){allMonths.push(mm); mm=shiftMonth(mm,1);} }
@@ -2613,14 +2655,13 @@ async function renderAssets(){
       </div>`;};
   /* カード未払金の引落予定(自動判定)。
      直近2ヶ月は引落済みも含めて全部出し、それより前は引落待ちだけを出す。 */
-  const allMeta=await tall("meta");
   const payRows=[]; let waitSum=0, paidSum=0;
   for(const sl of allMeta){
     const k=String(sl.k); if(!k.startsWith("cardbill:")) continue;
     const bm=k.slice(9); if(bm>m || bm<shiftMonth(m,-5)) continue;
     for(const [card,amt] of Object.entries(sl.v||{})){
       if(!(amt>0)) continue;
-      const st=cardPayStatus(txs,bm,card);
+      const st=PAY.status(bm,card);
       if(st.state==="paid"){ paidSum+=amt; if(bm<shiftMonth(m,-1)) continue; }
       else waitSum+=amt;
       payRows.push({bm,card,amt,st});
@@ -2649,8 +2690,9 @@ async function renderAssets(){
   </div>
   <div class="card">
     <div class="bigbal">
-      <div class="t">純資産(${monthLabel(m)}末)</div>
+      <div class="t">引落後の残高(${monthLabel(m)}末)</div>
       <div class="v num">${nw!=null?yen(nw):"—"}</div>
+      ${nwR?`<div class="note" style="text-align:center">実際の月末残高 ${yen(nwR.cash)}${nwR.wait?` − 引落待ち ${yen(nwR.wait)}`:""}</div>`:""}
       ${(nw!=null&&nwPrev!=null)?`<div class="note" style="text-align:center">前月比 <b style="color:${nw-nwPrev>=0?'var(--income)':'var(--expense)'}">${nw-nwPrev>=0?"+":""}${yen(nw-nwPrev)}</b></div>`:""}
       ${nwR&&nwR.carried?`<div class="note" style="text-align:center">※未記録の口座は前月値を引継ぎ</div>`:""}
     </div>
